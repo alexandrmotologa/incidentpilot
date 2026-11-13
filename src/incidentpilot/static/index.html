@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>IncidentPilot - On-Call Command Center</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" id="sse-dot" title="Live SSE status"></span>
+      <span class="brand-name">IncidentPilot</span>
+      <span class="brand-tag">Autonomous SRE Responder</span>
+    </div>
+    <div class="topbar-meta" id="health-meta">
+      <span class="pill">Loading providers...</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <aside class="sidebar">
+      <div class="sidebar-header">
+        <h2>Incidents</h2>
+        <button class="btn btn-ghost btn-sm" id="refresh-btn" type="button">Refresh</button>
+      </div>
+      <div class="incident-list" id="incident-list">
+        <div class="empty-state">No incidents recorded yet.</div>
+      </div>
+    </aside>
+
+    <section class="detail-pane" id="detail-pane">
+      <div class="empty-detail">
+        <h3>Select an incident</h3>
+        <p>
+          Inbound webhooks from PagerDuty, Alertmanager, and Sentry appear here
+          within seconds, complete with 15-minute log correlation, suspect Git commits,
+          and one-click rollback.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
