@@ -11,6 +11,7 @@ from incidentpilot.models import (
     IncidentRecord,
     IncidentStatus,
     RollbackRecord,
+    SreMetrics,
 )
 
 
@@ -110,20 +111,69 @@ class IncidentStore:
                     return None
                 return IncidentRecord.model_validate_json(row[0])
 
-    async def list_incidents(self, limit: int = 50, service: str | None = None) -> list[IncidentRecord]:
-        """List recent incidents ordered newest first."""
+    async def list_incidents(
+        self,
+        limit: int = 50,
+        service: str | None = None,
+        severity: str | None = None,
+        status: str | None = None,
+    ) -> list[IncidentRecord]:
+        """List recent incidents ordered newest first with optional filters."""
         await self.initialize()
         query = "SELECT record_json FROM incidents"
+        clauses: list[str] = []
         params: list[object] = []
         if service:
-            query += " WHERE service = ?"
-            params.append(service)
+            clauses.append("LOWER(service) LIKE ?")
+            params.append(f"%{service.lower()}%")
+        if status:
+            clauses.append("status = ?")
+            params.append(status)
+        if clauses:
+            query += " WHERE " + " AND ".join(clauses)
         query += " ORDER BY created_at DESC LIMIT ?;"
-        params.append(limit)
+        params.append(limit * 3 if severity else limit)
         async with aiosqlite.connect(self.db_path) as db:
             async with db.execute(query, params) as cursor:
                 rows = await cursor.fetchall()
-                return [IncidentRecord.model_validate_json(row[0]) for row in rows]
+                records = [IncidentRecord.model_validate_json(row[0]) for row in rows]
+        if severity:
+            records = [r for r in records if r.event.severity.value == severity]
+        return records[:limit]
+
+    async def compute_metrics(self) -> SreMetrics:
+        """Compute aggregate SRE operational metrics from stored incidents."""
+        records = await self.list_incidents(limit=500)
+        if not records:
+            return SreMetrics()
+        active_statuses = {
+            IncidentStatus.INVESTIGATING,
+            IncidentStatus.BRIEF_SENT,
+            IncidentStatus.ROLLBACK_PENDING,
+            IncidentStatus.ROLLBACK_FAILED,
+        }
+        resolved_statuses = {IncidentStatus.RESOLVED, IncidentStatus.ROLLED_BACK}
+        active = sum(1 for r in records if r.status in active_statuses)
+        resolved = sum(1 for r in records if r.status in resolved_statuses)
+        inv_durations = [
+            r.brief.investigation_duration_ms
+            for r in records
+            if r.brief is not None and r.brief.investigation_duration_ms > 0
+        ]
+        mttrs = [r.mttr_seconds for r in records if r.mttr_seconds is not None]
+        correlated = sum(
+            1 for r in records if r.brief is not None and r.brief.top_candidate is not None
+        )
+        return SreMetrics(
+            total_incidents=len(records),
+            active_incidents=active,
+            resolved_incidents=resolved,
+            avg_investigation_ms=round(sum(inv_durations) / len(inv_durations), 1)
+            if inv_durations
+            else 0.0,
+            avg_mttr_seconds=round(sum(mttrs) / len(mttrs), 1) if mttrs else None,
+            correlation_hit_rate=round((correlated / len(records)) * 100.0, 1),
+        )
 
     async def find_active_by_fingerprint(
         self, fingerprint: str, window_seconds: int

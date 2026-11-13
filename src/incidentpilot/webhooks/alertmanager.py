@@ -40,8 +40,7 @@ def parse_alertmanager_webhook(payload: dict[str, Any]) -> list[IncidentEvent]:
 
     for idx, alert in enumerate(alerts):
         status = str(alert.get("status", "firing")).lower()
-        if status == "resolved":
-            continue
+        is_resolved = status == "resolved"
         labels = {**common_labels, **(alert.get("labels") or {})}
         annotations = {**common_annotations, **(alert.get("annotations") or {})}
 
@@ -72,6 +71,7 @@ def parse_alertmanager_webhook(payload: dict[str, Any]) -> list[IncidentEvent]:
                 triggered_at=_parse_dt(alert.get("startsAt")),
                 labels={str(k): str(v) for k, v in labels.items()},
                 raw_payload=alert,
+                is_resolved=is_resolved,
             )
         )
 

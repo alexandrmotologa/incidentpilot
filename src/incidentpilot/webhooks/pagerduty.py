@@ -46,8 +46,9 @@ def parse_pagerduty_webhook(payload: dict[str, Any]) -> list[IncidentEvent]:
     if "event" in payload and isinstance(payload["event"], dict):
         ev = payload["event"]
         event_type = str(ev.get("event_type", ""))
-        if event_type and event_type not in {"incident.triggered", "incident.escalated"}:
+        if event_type and event_type not in {"incident.triggered", "incident.escalated", "incident.resolved"}:
             return []
+        is_resolved = event_type == "incident.resolved"
         data = ev.get("data", {}) or {}
         service_obj = data.get("service") or {}
         service = (
@@ -79,6 +80,7 @@ def parse_pagerduty_webhook(payload: dict[str, Any]) -> list[IncidentEvent]:
                 stacktrace_hint=description if "at " in description or ".go:" in description or ".py" in description else "",
                 labels={"incident_number": str(data.get("number", ""))},
                 raw_payload=payload,
+                is_resolved=is_resolved,
             )
         )
         return events
@@ -86,8 +88,9 @@ def parse_pagerduty_webhook(payload: dict[str, Any]) -> list[IncidentEvent]:
     # PagerDuty V2 format: {"messages": [{"event": "incident.trigger", "incident": {...}}]}
     for msg in payload.get("messages", []) or []:
         ev_name = str(msg.get("event", ""))
-        if ev_name and ev_name not in {"incident.trigger", "incident.escalate"}:
+        if ev_name and ev_name not in {"incident.trigger", "incident.escalate", "incident.resolve"}:
             continue
+        is_resolved_v2 = ev_name == "incident.resolve"
         inc = msg.get("incident") or {}
         service_obj = inc.get("service") or {}
         service = service_obj.get("name") or service_obj.get("summary") or "unknown-service"
@@ -106,6 +109,7 @@ def parse_pagerduty_webhook(payload: dict[str, Any]) -> list[IncidentEvent]:
                 severity=_map_severity(urgency, priority),
                 triggered_at=_parse_dt(inc.get("created_at") or msg.get("created_on")),
                 raw_payload=payload,
+                is_resolved=is_resolved_v2,
             )
         )
 

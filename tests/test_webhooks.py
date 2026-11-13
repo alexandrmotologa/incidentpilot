@@ -40,7 +40,7 @@ def test_pagerduty_v3_parser() -> None:
     assert "checkout.go:114" in events[0].stacktrace_hint
 
 
-def test_alertmanager_v4_parser_ignores_resolved() -> None:
+def test_alertmanager_v4_parser_handles_resolved() -> None:
     payload = {
         "commonLabels": {"service": "payments"},
         "alerts": [
@@ -59,10 +59,14 @@ def test_alertmanager_v4_parser_ignores_resolved() -> None:
         ],
     }
     events = parse_alertmanager_webhook(payload)
-    assert len(events) == 1
+    assert len(events) == 2
     assert events[0].service == "payments"
     assert events[0].severity == Severity.CRITICAL
     assert events[0].fingerprint == "abc123"
+    assert events[0].is_resolved is False
+
+    assert events[1].fingerprint == "def456"
+    assert events[1].is_resolved is True
 
 
 def test_sentry_parser_extracts_frames() -> None:

@@ -54,6 +54,10 @@ class Settings(BaseSettings):
     slack_channel: str = ""
     slack_signing_secret: str = ""
 
+    # Multi-service routing & runbooks
+    services_config_path: str = "./services.yaml"
+    runbooks_config_path: str = "./runbooks.yaml"
+
     # Rollback executor
     rollback_provider: Literal["local_git", "github_workflow", "webhook"] = "local_git"
     rollback_webhook_url: str = ""

@@ -57,6 +57,7 @@ def correlate_incident(
     stacktraces: list[ParsedStackTrace],
     commits: list[CommitInfo],
     deployments: list[DeploymentInfo],
+    blame_shas: set[str] | None = None,
 ) -> list[CorrelationCandidate]:
     """Rank recent commits by correlation strength with the incident evidence."""
     if not commits:
@@ -114,6 +115,12 @@ def correlate_incident(
         if best_line_pts > 0:
             score += best_line_pts
             reasons.append(f"Diff hunk overlaps crash location: {', '.join(matched_lines)}")
+
+        if blame_shas and any(
+            commit.sha.startswith(b) or b.startswith(commit.short_sha) for b in blame_shas
+        ):
+            score += 20.0
+            reasons.append("git blame confirms commit authored the exact crashing line")
 
         # Recency score relative to incident trigger time
         age_hours = max(

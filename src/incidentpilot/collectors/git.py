@@ -42,6 +42,8 @@ class GitProvider(Protocol):
         self, environment: str = "production", limit: int = 10
     ) -> list[DeploymentInfo]: ...
 
+    async def blame_line(self, file_path: str, line: int) -> str | None: ...
+
 
 class LocalGitProvider:
     """Inspects a real local Git repository via git CLI."""
@@ -195,6 +197,27 @@ class LocalGitProvider:
     ) -> list[DeploymentInfo]:
         return await asyncio.to_thread(self._fetch_deployments_sync, environment, limit)
 
+    def _blame_line_sync(self, file_path: str, line: int) -> str | None:
+        if line <= 0:
+            return None
+        norm = file_path.replace("\\", "/").lstrip("/")
+        # Try exact relative path first, then progressively strip leading container prefixes (e.g. /app/)
+        parts = [p for p in norm.split("/") if p]
+        candidates = ["/".join(parts[i:]) for i in range(len(parts))]
+        for rel in candidates:
+            target = Path(self.repo_path) / rel
+            if not target.is_file():
+                continue
+            out = self._run_git("blame", "-L", f"{line},{line}", "--porcelain", rel)
+            first = out.splitlines()[0] if out.splitlines() else ""
+            sha = first.split(" ")[0].strip() if first else ""
+            if len(sha) >= 7 and not sha.startswith("^"):
+                return sha
+        return None
+
+    async def blame_line(self, file_path: str, line: int) -> str | None:
+        return await asyncio.to_thread(self._blame_line_sync, file_path, line)
+
 
 class GitHubGitProvider:
     """Fetches commits, diffs, deployments, and releases via GitHub REST API."""
@@ -307,6 +330,9 @@ class GitHubGitProvider:
                         )
                     )
         return deployments
+
+    async def blame_line(self, file_path: str, line: int) -> str | None:
+        return None
 
 
 def build_git_provider(settings: Settings) -> GitProvider:

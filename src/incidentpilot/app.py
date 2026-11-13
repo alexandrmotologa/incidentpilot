@@ -15,6 +15,7 @@ from pydantic import BaseModel
 
 from incidentpilot.config import Settings, get_settings
 from incidentpilot.orchestrator import IncidentOrchestrator, generate_postmortem_markdown
+from incidentpilot.simulator import ScenarioName, run_scenario_simulation
 from incidentpilot.storage import IncidentStore
 from incidentpilot.webhooks import (
     parse_alertmanager_webhook,
@@ -37,6 +38,10 @@ class RollbackRequest(BaseModel):
 
 class DismissRequest(BaseModel):
     actor: str = "oncall-engineer"
+
+
+class SimulateRequest(BaseModel):
+    scenario: ScenarioName = "go_nil_pointer"
 
 
 def create_app(
@@ -86,6 +91,9 @@ def create_app(
         results = []
         for ev in events:
             record, deduped = await orch.ingest_event(ev, wait_for_investigation=sync)
+            if record is None:
+                results.append({"incident_id": None, "status": "no_active_incident", "deduplicated": False})
+                continue
             results.append(
                 {
                     "incident_id": record.id,
@@ -191,9 +199,28 @@ def create_app(
     async def list_incidents(
         limit: int = Query(default=50, ge=1, le=200),
         service: str | None = Query(default=None),
+        severity: str | None = Query(default=None),
+        status: str | None = Query(default=None),
     ) -> list[dict[str, Any]]:
-        records = await store.list_incidents(limit=limit, service=service)
+        records = await store.list_incidents(
+            limit=limit, service=service, severity=severity, status=status
+        )
         return [r.model_dump(mode="json") for r in records]
+
+    @app.get("/api/metrics")
+    async def get_metrics() -> dict[str, Any]:
+        metrics = await store.compute_metrics()
+        return metrics.model_dump(mode="json")
+
+    @app.post("/api/simulate")
+    async def api_simulate(body: SimulateRequest) -> dict[str, Any]:
+        record = await run_scenario_simulation(
+            store=store,
+            base_settings=cfg,
+            scenario=body.scenario,
+            broadcast_orch=orch,
+        )
+        return record.model_dump(mode="json")
 
     @app.get("/api/incidents/{incident_id}")
     async def get_incident(incident_id: str) -> dict[str, Any]:

@@ -1,0 +1,16 @@
+runbooks:
+  - id: redis-oom
+    title: Redis Out Of Memory / Eviction Spike
+    pattern: "(OOM command not allowed|eviction policy reached|maxmemory reached)"
+    steps:
+      - "Inspect Redis memory info with `INFO memory`."
+      - "Identify key memory consumers using `redis-cli --bigkeys`."
+      - "Verify maxmemory-policy setting or raise cluster memory quota."
+
+  - id: kafka-consumer-lag
+    title: Kafka Consumer Lag / Partition Starvation
+    pattern: "(consumer lag|CommitFailedException|rebalance in progress)"
+    steps:
+      - "Check consumer group lag with `kafka-consumer-groups.sh --describe`."
+      - "Inspect poison pills or slow deserialization in worker processing threads."
+      - "Scale consumer replicas up to partition count if consumer instances are starved."

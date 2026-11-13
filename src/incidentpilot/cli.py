@@ -60,7 +60,7 @@ async def _run_simulation() -> None:
                 "    if req == nil || req.Customer == nil {",
                 '        return errors.New("missing customer")',
                 "    }",
-                "    return gateway.Submit(req.Customer.ID)",
+                "    return gateway.Submit(req.SafeCustomerID())",
                 "}",
             ]
         )

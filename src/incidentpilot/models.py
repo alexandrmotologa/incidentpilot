@@ -53,6 +53,7 @@ class IncidentEvent(BaseModel):
     stacktrace_hint: str = ""
     labels: dict[str, str] = Field(default_factory=dict)
     raw_payload: dict[str, Any] = Field(default_factory=dict)
+    is_resolved: bool = False
 
 
 class StackFrame(BaseModel):
@@ -132,6 +133,40 @@ class CorrelationCandidate(BaseModel):
     rollback_target: str = ""
 
 
+class RunbookMatch(BaseModel):
+    """Matched operational runbook for non-code or infrastructure failures."""
+
+    id: str
+    title: str
+    matched_pattern: str
+    steps: list[str] = Field(default_factory=list)
+
+
+class ServiceRouteConfig(BaseModel):
+    """Per-service routing overrides loaded from services.yaml."""
+
+    service: str
+    git_provider: str | None = None
+    local_repo_path: str | None = None
+    github_repo: str | None = None
+    slack_channel: str | None = None
+    slack_webhook_url: str | None = None
+    rollback_provider: str | None = None
+    rollback_webhook_url: str | None = None
+    rollback_command: str | None = None
+
+
+class SreMetrics(BaseModel):
+    """Aggregated SRE operational metrics computed from incident history."""
+
+    total_incidents: int = 0
+    active_incidents: int = 0
+    resolved_incidents: int = 0
+    avg_investigation_ms: float = 0.0
+    avg_mttr_seconds: float | None = None
+    correlation_hit_rate: float = 0.0
+
+
 class IncidentBrief(BaseModel):
     """Synthesized root-cause analysis and action recommendation."""
 
@@ -143,8 +178,12 @@ class IncidentBrief(BaseModel):
     confidence: float = Field(ge=0.0, le=100.0)
     evidence: list[str] = Field(default_factory=list)
     error_count_15m: int = 0
+    baseline_error_count_45m: int = 0
+    error_spike_ratio: float | None = None
     top_stacktrace: ParsedStackTrace | None = None
     top_candidate: CorrelationCandidate | None = None
+    candidates: list[CorrelationCandidate] = Field(default_factory=list)
+    matched_runbooks: list[RunbookMatch] = Field(default_factory=list)
     investigation_duration_ms: int = 0
     synthesis_mode: str = "deterministic"
 
@@ -181,6 +220,8 @@ class IncidentRecord(BaseModel):
     alert_count: int = 1
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+    resolved_at: datetime | None = None
+    mttr_seconds: float | None = None
     brief: IncidentBrief | None = None
     timeline: list[TimelineStep] = Field(default_factory=list)
     rollbacks: list[RollbackRecord] = Field(default_factory=list)

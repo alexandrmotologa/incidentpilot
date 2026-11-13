@@ -15,7 +15,17 @@ from incidentpilot.models import (
     IncidentEvent,
     LogEntry,
     ParsedStackTrace,
+    RunbookMatch,
 )
+
+
+def _compute_spike_ratio(current_15m: int, baseline_45m: int) -> float | None:
+    if current_15m == 0 and baseline_45m == 0:
+        return None
+    baseline_per_15m = baseline_45m / 3.0
+    if baseline_per_15m <= 0:
+        return float(current_15m) if current_15m > 0 else None
+    return round(current_15m / baseline_per_15m, 2)
 
 
 def _deterministic_brief(
@@ -26,12 +36,22 @@ def _deterministic_brief(
     candidates: list[CorrelationCandidate],
     deployments: list[DeploymentInfo],
     duration_ms: int,
+    baseline_error_count_45m: int = 0,
+    matched_runbooks: list[RunbookMatch] | None = None,
 ) -> IncidentBrief:
-    top_st = stacktraces[0] if stacktraces else None
+    top_st = next((st for st in stacktraces if st.frames), stacktraces[0] if stacktraces else None)
     top_cand = candidates[0] if candidates else None
+    runbooks = matched_runbooks or []
+    spike_ratio = _compute_spike_ratio(len(logs), baseline_error_count_45m)
+
+    spike_note = ""
+    if spike_ratio is not None and baseline_error_count_45m == 0 and len(logs) > 0:
+        spike_note = f" (new regression: 0 errors in prior 45m -> {len(logs)} in last 15m)"
+    elif spike_ratio is not None:
+        spike_note = f" ({spike_ratio}x vs prior 45m baseline of {baseline_error_count_45m})"
 
     evidence: list[str] = [
-        f"Collected {len(logs)} error log(s) for service '{event.service}' in the last 15 minutes."
+        f"Collected {len(logs)} error log(s) for service '{event.service}' in the last 15 minutes{spike_note}."
     ]
     if top_st and top_st.frames:
         lead_frame = top_st.frames[0]
@@ -65,6 +85,15 @@ def _deterministic_brief(
         )
         recommendation = f"Rollback {event.service} to {rollback_target}"
         confidence = top_cand.score
+    elif runbooks:
+        rollback_target = deployments[1].version if len(deployments) >= 2 else "previous-stable"
+        rb_top = runbooks[0]
+        probable_cause = (
+            f"Matched operational runbook '{rb_top.title}' (pattern '{rb_top.matched_pattern}') "
+            f"across {len(logs)} error(s) for {event.service}."
+        )
+        recommendation = rb_top.steps[0] if rb_top.steps else f"Follow runbook {rb_top.title}"
+        confidence = 65.0
     else:
         rollback_target = deployments[1].version if len(deployments) >= 2 else "previous-stable"
         probable_cause = (
@@ -86,8 +115,12 @@ def _deterministic_brief(
         confidence=confidence,
         evidence=evidence,
         error_count_15m=len(logs),
+        baseline_error_count_45m=baseline_error_count_45m,
+        error_spike_ratio=spike_ratio,
         top_stacktrace=top_st,
         top_candidate=top_cand,
+        candidates=candidates[:3],
+        matched_runbooks=runbooks,
         investigation_duration_ms=duration_ms,
         synthesis_mode="deterministic",
     )
@@ -102,6 +135,8 @@ async def synthesize_brief(
     candidates: list[CorrelationCandidate],
     deployments: list[DeploymentInfo],
     duration_ms: int,
+    baseline_error_count_45m: int = 0,
+    matched_runbooks: list[RunbookMatch] | None = None,
 ) -> IncidentBrief:
     """Generate an IncidentBrief using an LLM if configured, else deterministic evidence synthesis."""
     base_brief = _deterministic_brief(
@@ -112,6 +147,8 @@ async def synthesize_brief(
         candidates=candidates,
         deployments=deployments,
         duration_ms=duration_ms,
+        baseline_error_count_45m=baseline_error_count_45m,
+        matched_runbooks=matched_runbooks,
     )
 
     if not settings.llm_api_key:

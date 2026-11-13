@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from incidentpilot.collectors.git import GitProvider, build_git_provider, default_git_since
 from incidentpilot.collectors.logs import LogCollector, build_log_collector
@@ -23,6 +23,8 @@ from incidentpilot.models import (
     RollbackRecord,
     TimelineStep,
 )
+from incidentpilot.routing import resolve_settings_for_service
+from incidentpilot.runbooks import match_runbooks
 from incidentpilot.storage import IncidentStore
 
 
@@ -40,6 +42,10 @@ class IncidentOrchestrator:
     ) -> None:
         self.settings = settings
         self.store = store
+        self._custom_log_collector = log_collector
+        self._custom_git_provider = git_provider
+        self._custom_slack_client = slack_client
+        self._custom_rollback_executor = rollback_executor
         self.log_collector = log_collector or build_log_collector(settings)
         self.git_provider = git_provider or build_git_provider(settings)
         self.slack_client = slack_client or SlackClient(settings)
@@ -67,11 +73,15 @@ class IncidentOrchestrator:
 
     async def ingest_event(
         self, event: IncidentEvent, wait_for_investigation: bool = False
-    ) -> tuple[IncidentRecord, bool]:
-        """Ingest a normalized alert, deduplicate, and launch autonomous investigation.
+    ) -> tuple[IncidentRecord | None, bool]:
+        """Ingest a normalized alert or resolution, deduplicate, and launch autonomous investigation.
 
-        Returns (record, deduplicated).
+        Returns (record, deduplicated). For resolution events with no active incident, returns (None, False).
         """
+        if event.is_resolved:
+            resolved = await self.resolve_by_fingerprint(event)
+            return resolved, False
+
         existing = await self.store.find_active_by_fingerprint(
             event.fingerprint, self.settings.dedup_window_seconds
         )
@@ -109,6 +119,27 @@ class IncidentOrchestrator:
 
         return record, False
 
+    async def resolve_by_fingerprint(self, event: IncidentEvent) -> IncidentRecord | None:
+        """Auto-resolve an active incident when a monitoring source sends a resolved webhook."""
+        existing = await self.store.find_active_by_fingerprint(
+            event.fingerprint, window_seconds=86400
+        )
+        if existing is None:
+            return None
+        now = datetime.now(timezone.utc)
+        existing.status = IncidentStatus.RESOLVED
+        existing.resolved_at = now
+        existing.mttr_seconds = round(max(0.0, (now - existing.created_at).total_seconds()), 1)
+        existing.timeline.append(
+            TimelineStep(
+                stage="auto_resolved",
+                detail=f"Resolved via {event.source.value} webhook (MTTR: {existing.mttr_seconds}s)",
+            )
+        )
+        await self.store.save_incident(existing)
+        await self._broadcast("incident_updated", existing.id)
+        return existing
+
     async def investigate(self, incident_id: str) -> IncidentRecord:
         """Run the full log/git/stacktrace correlation pipeline within the 60s SLA."""
         record = await self.store.get_incident(incident_id)
@@ -117,26 +148,35 @@ class IncidentOrchestrator:
 
         started = time.perf_counter()
         event = record.event
-        since_logs = event.triggered_at - timedelta(minutes=self.settings.log_window_minutes)
-        until_logs = event.triggered_at + timedelta(minutes=2)
-        since_git = default_git_since(self.settings)
+        svc_settings = resolve_settings_for_service(self.settings, event.service)
+        git_provider = self._custom_git_provider or build_git_provider(svc_settings)
+        slack_client = self._custom_slack_client or SlackClient(svc_settings)
 
-        async def _collect() -> tuple[list, list, list]:
+        since_logs = event.triggered_at - timedelta(minutes=svc_settings.log_window_minutes)
+        until_logs = event.triggered_at + timedelta(minutes=2)
+        baseline_since = since_logs - timedelta(minutes=45)
+        since_git = default_git_since(svc_settings)
+
+        async def _collect() -> tuple[list, list, list, list]:
             return await asyncio.gather(
                 self.log_collector.fetch_error_logs(event.service, since_logs, until_logs),
-                self.git_provider.fetch_recent_commits(since_git, limit=25),
-                self.git_provider.fetch_recent_deployments(event.environment, limit=10),
+                self.log_collector.fetch_error_logs(event.service, baseline_since, since_logs),
+                git_provider.fetch_recent_commits(since_git, limit=25),
+                git_provider.fetch_recent_deployments(event.environment, limit=10),
             )
 
         t_collect = time.perf_counter()
-        logs, commits, deployments = await asyncio.wait_for(
-            _collect(), timeout=float(self.settings.investigation_timeout_seconds)
+        logs, baseline_logs, commits, deployments = await asyncio.wait_for(
+            _collect(), timeout=float(svc_settings.investigation_timeout_seconds)
         )
         collect_ms = int((time.perf_counter() - t_collect) * 1000)
         record.timeline.append(
             TimelineStep(
                 stage="evidence_collected",
-                detail=f"Fetched {len(logs)} error logs (15m window), {len(commits)} commits, {len(deployments)} deployments",
+                detail=(
+                    f"Fetched {len(logs)} error logs (15m), {len(baseline_logs)} baseline logs (prior 45m), "
+                    f"{len(commits)} commits, {len(deployments)} deployments"
+                ),
                 duration_ms=collect_ms,
             )
         )
@@ -162,14 +202,34 @@ class IncidentOrchestrator:
             )
         )
 
-        # Correlate evidence
+        # Run git blame on top stack frames with line numbers
+        blame_shas: set[str] = set()
+        blame_tasks = []
+        for st in stacktraces[:2]:
+            for frame in st.frames[:3]:
+                if frame.line is not None:
+                    blame_tasks.append(git_provider.blame_line(frame.file, frame.line))
+        if blame_tasks:
+            blame_results = await asyncio.gather(*blame_tasks, return_exceptions=True)
+            for res in blame_results:
+                if isinstance(res, str) and res:
+                    blame_shas.add(res)
+
+        # Correlate evidence + match operational runbooks
         t_corr = time.perf_counter()
-        candidates = correlate_incident(event, logs, stacktraces, commits, deployments)
+        candidates = correlate_incident(
+            event, logs, stacktraces, commits, deployments, blame_shas=blame_shas
+        )
+        matched_runbooks = match_runbooks(event, logs, svc_settings.runbooks_config_path)
         corr_ms = int((time.perf_counter() - t_corr) * 1000)
         top_msg = (
             f"Top suspect: {candidates[0].commit.short_sha} (score {candidates[0].score:.1f}%)"
             if candidates
-            else "No direct commit match found"
+            else (
+                f"Matched runbook: {matched_runbooks[0].title}"
+                if matched_runbooks
+                else "No direct commit or runbook match found"
+            )
         )
         record.timeline.append(
             TimelineStep(
@@ -181,7 +241,7 @@ class IncidentOrchestrator:
 
         total_ms = int((time.perf_counter() - started) * 1000)
         brief = await synthesize_brief(
-            settings=self.settings,
+            settings=svc_settings,
             incident_id=record.id,
             event=event,
             logs=logs,
@@ -189,11 +249,13 @@ class IncidentOrchestrator:
             candidates=candidates,
             deployments=deployments,
             duration_ms=total_ms,
+            baseline_error_count_45m=len(baseline_logs),
+            matched_runbooks=matched_runbooks,
         )
         record.brief = brief
 
         # Dispatch Slack brief
-        slack_res = await self.slack_client.send_brief(record)
+        slack_res = await slack_client.send_brief(record)
         if slack_res.get("ts"):
             record.slack_message_ts = str(slack_res["ts"])
         record.status = IncidentStatus.BRIEF_SENT
@@ -231,16 +293,22 @@ class IncidentOrchestrator:
         await self.store.save_incident(record)
         await self._broadcast("incident_updated", record.id)
 
-        rb = await self.rollback_executor.execute(
+        svc_settings = resolve_settings_for_service(self.settings, record.event.service)
+        executor = self._custom_rollback_executor or RollbackExecutor(svc_settings)
+        rb = await executor.execute(
             record=record,
             target_version=resolved_target,
             requested_by=requested_by,
         )
         await self.store.save_rollback(rb)
         record.rollbacks.append(rb)
-        record.status = (
-            IncidentStatus.ROLLED_BACK if rb.status == "succeeded" else IncidentStatus.ROLLBACK_FAILED
-        )
+        if rb.status == "succeeded":
+            record.status = IncidentStatus.ROLLED_BACK
+            now = datetime.now(timezone.utc)
+            record.resolved_at = now
+            record.mttr_seconds = round(max(0.0, (now - record.created_at).total_seconds()), 1)
+        else:
+            record.status = IncidentStatus.ROLLBACK_FAILED
         record.timeline.append(
             TimelineStep(
                 stage="rollback_executed",

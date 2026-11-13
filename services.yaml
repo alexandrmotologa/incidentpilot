@@ -1,0 +1,12 @@
+services:
+  payment-gateway:
+    git_provider: local
+    local_repo_path: ./repos/payment-gateway
+    slack_channel: "#oncall-payments"
+    rollback_provider: local_git
+
+  billing-worker:
+    git_provider: github
+    github_repo: acme-corp/billing-service
+    slack_channel: "#oncall-billing"
+    rollback_provider: github_workflow

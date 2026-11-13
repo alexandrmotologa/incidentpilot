@@ -17,9 +17,9 @@ _PY_FRAME_RE = re.compile(
 )
 _PY_ERR_RE = re.compile(r"^(?P<type>[A-Za-z_][A-Za-z0-9_.]*(?:Error|Exception|Panic)):\s*(?P<msg>.+)$")
 
-# Node.js / TS: '    at processOrder (/app/src/checkout.ts:114:18)' or '    at /app/src/checkout.ts:114:18'
-_NODE_FRAME_RE = re.compile(
-    r"^\s*at\s+(?:(?P<func>[^\s(]+)\s+\()?(?P<file>[^():\n]+\.(?:js|ts|mjs|cjs|jsx|tsx)):(?P<line>\d+)(?::\d+)?\)?"
+# Universal call frame (Node.js, Sentry, generic): '    at processOrder (/app/src/checkout.ts:114:18)'
+_CALL_FRAME_RE = re.compile(
+    r"^\s*at\s+(?:(?P<func>[^\s(]+)\s+\()?(?P<file>[^():\n]+\.[a-zA-Z0-9_-]+):(?P<line>\d+)(?::\d+)?\)?"
 )
 
 # Java: '    at com.acme.Checkout.charge(Checkout.java:114)'
@@ -105,17 +105,26 @@ def parse_stacktrace(text: str) -> ParsedStackTrace | None:
             pending_go_func = ""
             continue
 
-        # Node / TypeScript
-        m_node = _NODE_FRAME_RE.match(line)
-        if m_node:
-            if language == "unknown":
-                language = "javascript"
+        # Call frame (Node.js, Sentry, generic)
+        m_call = _CALL_FRAME_RE.match(line)
+        if m_call:
+            norm_file = normalize_file_path(m_call.group("file"))
+            detected_lang = language
+            if detected_lang == "unknown":
+                if norm_file.endswith((".js", ".ts", ".jsx", ".tsx")):
+                    detected_lang = "javascript"
+                elif norm_file.endswith(".py"):
+                    detected_lang = "python"
+                elif norm_file.endswith(".go"):
+                    detected_lang = "go"
+            if language == "unknown" and detected_lang != "unknown":
+                language = detected_lang
             frames.append(
                 StackFrame(
-                    file=normalize_file_path(m_node.group("file")),
-                    line=int(m_node.group("line")),
-                    function=(m_node.group("func") or "").strip(),
-                    language="javascript",
+                    file=norm_file,
+                    line=int(m_call.group("line")),
+                    function=(m_call.group("func") or "").strip(),
+                    language=detected_lang,
                     raw=line.strip(),
                 )
             )
