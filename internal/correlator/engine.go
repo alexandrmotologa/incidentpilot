@@ -24,10 +24,32 @@ func pathsMatch(framePath, commitFilePath string) (matched bool, exactSuffix boo
 	return false, false
 }
 
+func isCommitMatch(suspect *models.CommitInfo, commitSHA string) bool {
+	if suspect == nil || commitSHA == "" {
+		return false
+	}
+	sSHA := strings.ToLower(strings.TrimSpace(suspect.SHA))
+	sShort := strings.ToLower(strings.TrimSpace(suspect.ShortSHA))
+	cSHA := strings.ToLower(strings.TrimSpace(commitSHA))
+
+	if sSHA != "" && (strings.HasPrefix(sSHA, cSHA) || strings.HasPrefix(cSHA, sSHA)) {
+		return true
+	}
+	if sShort != "" && (strings.HasPrefix(cSHA, sShort) || strings.HasPrefix(sShort, cSHA)) {
+		return true
+	}
+	return false
+}
+
 func SelectRollbackTarget(deployments []models.DeploymentInfo, suspectCommit *models.CommitInfo) string {
 	if len(deployments) >= 2 {
-		for _, dep := range deployments {
-			if suspectCommit != nil && dep.CommitSHA != "" && strings.HasPrefix(suspectCommit.SHA, dep.CommitSHA) {
+		for i, dep := range deployments {
+			if suspectCommit != nil && dep.CommitSHA != "" && isCommitMatch(suspectCommit, dep.CommitSHA) {
+				continue
+			}
+			// If this is the current active deployment (first in list) and suspect wasn't matched explicitly,
+			// the safe rollback target should be the previous release
+			if i == 0 && suspectCommit != nil {
 				continue
 			}
 			if dep.Version != "" {

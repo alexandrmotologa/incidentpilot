@@ -1,8 +1,44 @@
-# IncidentPilot
+<p align="center">
+  <img src="docs/images/logo.png?raw=true" alt="IncidentPilot Logo" width="130" style="border-radius: 24px;" />
+</p>
+
+<h1 align="center">IncidentPilot</h1>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Language-Go%201.24-00ADD8?style=flat-square&logo=go&logoColor=white" alt="Go" />
+  <img src="https://img.shields.io/badge/Frontend-React%2019%20%2B%20TypeScript-61DAFB?style=flat-square&logo=react&logoColor=black" alt="React 19" />
+  <img src="https://img.shields.io/badge/Storage-Pure--Go%20SQLite-003B57?style=flat-square&logo=sqlite&logoColor=white" alt="SQLite" />
+  <img src="https://img.shields.io/badge/Architecture-Single%20Binary%20(%3C25MB)-0f172a?style=flat-square" alt="Single Binary" />
+  <img src="https://img.shields.io/badge/License-MIT-green?style=flat-square" alt="License" />
+</p>
+
+<p align="center">
+  <b>Autonomous on-call incident responder and log, stack trace, and Git deployment correlator.</b>
+</p>
+
+<p align="center">
+  <img src="docs/images/incidentpilot_demo.gif?raw=true" alt="IncidentPilot Autonomous Incident Response Demo" width="100%" />
+</p>
 
 IncidentPilot is an autonomous on-call incident responder and log, stack trace, and Git deployment correlator. When an alert arrives from PagerDuty, Prometheus Alertmanager, Sentry, or Datadog, IncidentPilot pulls error logs from the last 15 minutes, parses stack traces, attributes crash lines with `git blame`, inspects recent commits and deployments, matches operational runbooks, and posts an Incident Brief to Slack with an interactive `[Confirm Rollback]` button.
 
 Packaged as a single Go binary under 25MB RAM with an embedded React 19 War Room Studio and a pure-Go SQLite persistence layer (`modernc.org/sqlite`, zero CGO runtime dependencies).
+
+## War Room Studio
+
+IncidentPilot embeds a high-density, real-time React 19 War Room Studio compiled directly into the binary with zero external assets. The dashboard updates via Server-Sent Events (SSE) and adapts dynamically across desktop monitors, tablets, and mobile devices:
+
+<p align="center">
+  <img src="docs/images/war_room_desktop.png?raw=true" alt="IncidentPilot Desktop War Room Studio" width="100%" />
+</p>
+
+### Responsive Multi-Device Adaptability
+
+The War Room Studio automatically reflows into a single-column operational layout on tablets and smartphones, keeping suspect commit diffs, stack traces, and action buttons accessible during mobile on-call shifts:
+
+<p align="center">
+  <img src="docs/images/war_room_mobile.png?raw=true" alt="IncidentPilot Mobile War Room Studio" width="320" />
+</p>
 
 ## Core Capabilities
 

@@ -1,0 +1,175 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <defs>
+    <clipPath id="squircle-clip">
+      <rect x="24" y="24" width="976" height="976" rx="220" />
+    </clipPath>
+
+    <!-- Glowing Optics -->
+    <linearGradient id="cyan-glow" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#00f5ff"/>
+      <stop offset="100%" stop-color="#0284c7"/>
+    </linearGradient>
+
+    <!-- Amber Beak -->
+    <linearGradient id="beak-amber" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="100%" stop-color="#d97706"/>
+    </linearGradient>
+    <linearGradient id="beak-dark" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#b45309"/>
+      <stop offset="100%" stop-color="#78350f"/>
+    </linearGradient>
+
+    <filter id="subtle-shadow" x="-15%" y="-15%" width="130%" height="130%">
+      <feDropShadow dx="0" dy="16" stdDeviation="20" flood-color="#000000" flood-opacity="0.14" />
+    </filter>
+  </defs>
+
+  <!-- Luxury White Squircle Container -->
+  <rect x="24" y="24" width="976" height="976" rx="220" fill="#ffffff" stroke="#e2e8f0" stroke-width="6" />
+
+  <g clip-path="url(#squircle-clip)">
+    <g transform="translate(512, 512)" filter="url(#subtle-shadow)">
+
+      <!-- Hexagonal Architectural Gateway Frame -->
+      <polygon points="
+        0,-390
+        338,-195
+        338,195
+        0,390
+        -338,195
+        -338,-195
+      " fill="none" stroke="#0f172a" stroke-width="36" stroke-linejoin="round" />
+
+      <!-- Telemetry Dashed Inner Ring -->
+      <polygon points="
+        0,-355
+        307,-177
+        307,177
+        0,355
+        -307,177
+        -307,-177
+      " fill="none" stroke="#00f5ff" stroke-width="4" opacity="0.4" stroke-dasharray="16, 12" />
+
+      <!-- 100% Watertight Solid Falcon Silhouette -->
+      <path d="
+        M 0 -300
+        L 60 -240
+        L 130 -220
+        L 250 -140
+        L 310 -30
+        L 260 70
+        L 190 170
+        L 110 250
+        L 50 310
+        L 0 350
+        L -50 310
+        L -110 250
+        L -190 170
+        L -260 70
+        L -310 -30
+        L -250 -140
+        L -130 -220
+        L -60 -240
+        Z
+      " fill="#0b0f19" />
+
+      <!-- ================= PEREGRINE FALCON ORIGAMI MESH ================= -->
+
+      <!-- Aerodynamic Head Crest -->
+      <polygon points="0,-300 -45,-230 0,-190" fill="#475569" />
+      <polygon points="0,-300 0,-190 45,-230" fill="#334155" />
+
+      <polygon points="-45,-230 -115,-190 -55,-145" fill="#334155" />
+      <polygon points="45,-230 55,-145 115,-190" fill="#1e293b" />
+
+      <!-- Brow Ridge (Intense Forward Vision) -->
+      <polygon points="0,-190 -55,-145 0,-115" fill="#64748b" />
+      <polygon points="0,-190 0,-115 55,-145" fill="#475569" />
+
+      <!-- Aerodynamic Delta Wings (Left) -->
+      <polygon points="-115,-190 -230,-150 -140,-90" fill="#475569" />
+      <polygon points="-230,-150 -310,-30 -210,-20" fill="#334155" />
+      <polygon points="-140,-90 -210,-20 -130,-15" fill="#334155" />
+
+      <polygon points="-310,-30 -260,70 -190,55" fill="#1e293b" />
+      <polygon points="-210,-20 -190,55 -120,50" fill="#334155" />
+      <polygon points="-260,70 -190,170 -130,135" fill="#0f172a" />
+      <polygon points="-190,55 -130,135 -85,120" fill="#1e293b" />
+
+      <!-- Aerodynamic Delta Wings (Right - Shaded) -->
+      <polygon points="115,-190 140,-90 230,-150" fill="#1e293b" />
+      <polygon points="230,-150 210,-20 310,-30" fill="#0f172a" />
+      <polygon points="140,-90 130,-15 210,-20" fill="#1e293b" />
+
+      <polygon points="310,-30 190,55 260,70" fill="#0b0f19" />
+      <polygon points="210,-20 120,50 190,55" fill="#1e293b" />
+      <polygon points="260,70 130,135 190,170" fill="#070b14" />
+      <polygon points="190,55 85,120 130,135" fill="#0f172a" />
+
+      <!-- Electric Cyan Raptor Optics / Visor (Sleek Angular Eye Sockets) -->
+      <!-- Left Eye -->
+      <polygon points="-38,-110 -90,-130 -58,-95" fill="#00f5ff" />
+      <polygon points="-38,-110 -58,-95 -40,-90" fill="#0284c7" />
+
+      <!-- Right Eye -->
+      <polygon points="38,-110 58,-95 90,-130" fill="#00f5ff" />
+      <polygon points="38,-110 40,-90 58,-95" fill="#0284c7" />
+
+      <!-- Cheek Malar Strike Stripes (Peregrine Field Mark) -->
+      <polygon points="-58,-95 -110,-95 -70,-35" fill="#1e293b" />
+      <polygon points="58,-95 70,-35 110,-95" fill="#0f172a" />
+
+      <polygon points="-40,-90 -70,-35 -30,-30" fill="#334155" />
+      <polygon points="40,-90 30,-30 70,-35" fill="#1e293b" />
+
+      <!-- Forehead to Beak Base -->
+      <polygon points="0,-115 -28,-60 0,-40" fill="#475569" />
+      <polygon points="0,-115 0,-40 28,-60" fill="#334155" />
+
+      <!-- Hooked Beak (Amber Gold Hook) -->
+      <polygon points="0,-40 -24,-20 0,15" fill="url(#beak-amber)" />
+      <polygon points="0,-40 0,15 24,-20" fill="url(#beak-dark)" />
+
+      <polygon points="0,15 -18,15 0,65" fill="url(#beak-amber)" />
+      <polygon points="0,15 0,65 18,15" fill="url(#beak-dark)" />
+      <polygon points="0,65 -6,55 0,80" fill="#b45309" />
+      <polygon points="0,65 0,80 6,55" fill="#78350f" />
+
+      <!-- Keel Plating -->
+      <polygon points="-30,-30 -95,35 -25,55" fill="#334155" />
+      <polygon points="30,-30 25,55 95,35" fill="#1e293b" />
+
+      <!-- Diamond Avionics Vector Sensor (Heart / On-Call Navigation Core) -->
+      <polygon points="0,75 -35,105 0,150" fill="#00f5ff" opacity="0.95" />
+      <polygon points="0,75 0,150 35,105" fill="#0284c7" opacity="0.95" />
+
+      <polygon points="0,90 -18,110 0,138" fill="#ffffff" opacity="0.9" />
+      <polygon points="0,90 0,138 18,110" fill="#38bdf8" opacity="0.9" />
+
+      <!-- Abdomen Armor -->
+      <polygon points="-25,55 -95,115 -35,165" fill="#1e293b" />
+      <polygon points="25,55 35,165 95,115" fill="#0f172a" />
+
+      <polygon points="0,150 -35,165 0,220" fill="#334155" />
+      <polygon points="0,150 0,220 35,165" fill="#1e293b" />
+
+      <!-- Tail Rudders -->
+      <polygon points="-95,115 -130,135 -75,215" fill="#0f172a" />
+      <polygon points="95,115 75,215 130,135" fill="#070b14" />
+
+      <polygon points="-35,165 -75,215 -25,255" fill="#1e293b" />
+      <polygon points="35,165 25,255 75,215" fill="#0b0f19" />
+
+      <polygon points="0,220 -25,255 0,300" fill="#334155" />
+      <polygon points="0,220 0,300 25,255" fill="#1e293b" />
+
+      <polygon points="-25,255 -55,275 0,345" fill="#1e293b" />
+      <polygon points="25,255 0,345 55,275" fill="#0f172a" />
+
+      <polygon points="0,300 -25,255 0,345" fill="#1e293b" />
+      <polygon points="0,300 0,345 25,255" fill="#0b0f19" />
+
+    </g>
+  </g>
+</svg>

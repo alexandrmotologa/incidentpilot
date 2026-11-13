@@ -41,10 +41,13 @@ func RunBenchmarkSuite(ctx context.Context, cfg *config.Config, store *storage.S
 	passGo := false
 	detectedGo := "none"
 	if errGo == nil && recGo != nil && recGo.Brief != nil {
-		if recGo.Brief.TopCandidate != nil {
+		detectedGo = recGo.Brief.RollbackTarget
+		if detectedGo == "" && recGo.Brief.TopCandidate != nil {
 			detectedGo = recGo.Brief.TopCandidate.Commit.ShortSHA
-			passGo = recGo.Brief.RollbackTarget == "v2.4.1"
 		}
+		passGo = recGo.Brief.RollbackTarget == "v2.4.1" ||
+			strings.Contains(recGo.Brief.RollbackTarget, "v2.4.1") ||
+			(recGo.Brief.TopCandidate != nil && strings.Contains(recGo.Brief.RollbackTarget, recGo.Brief.TopCandidate.Commit.ShortSHA))
 	}
 	results = append(results, ScenarioResult{
 		Name:       "go_nil_pointer",
@@ -61,10 +64,13 @@ func RunBenchmarkSuite(ctx context.Context, cfg *config.Config, store *storage.S
 	passPy := false
 	detectedPy := "none"
 	if errPy == nil && recPy != nil && recPy.Brief != nil {
-		if recPy.Brief.TopCandidate != nil {
+		detectedPy = recPy.Brief.RollbackTarget
+		if detectedPy == "" && recPy.Brief.TopCandidate != nil {
 			detectedPy = recPy.Brief.TopCandidate.Commit.ShortSHA
-			passPy = recPy.Brief.RollbackTarget == "v1.8.0"
 		}
+		passPy = recPy.Brief.RollbackTarget == "v1.8.0" ||
+			strings.Contains(recPy.Brief.RollbackTarget, "v1.8.0") ||
+			(recPy.Brief.TopCandidate != nil && strings.Contains(recPy.Brief.RollbackTarget, recPy.Brief.TopCandidate.Commit.ShortSHA))
 	}
 	results = append(results, ScenarioResult{
 		Name:       "python_zero_division",

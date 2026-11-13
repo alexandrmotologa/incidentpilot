@@ -503,3 +503,94 @@ ul.clean-list li {
   border-left-color: #f59e0b;
   background: rgba(245, 158, 11, 0.08);
 }
+
+/* Responsiveness across Mobile, Tablet, and Desktop */
+@media (max-width: 960px) {
+  body {
+    overflow-y: auto;
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 10px 14px;
+  }
+
+  .topbar-controls {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .sim-group {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .sim-group select {
+    flex: 1;
+    min-width: 200px;
+  }
+
+  .metrics-bar {
+    grid-template-columns: repeat(2, 1fr);
+    padding: 8px 14px;
+  }
+
+  .layout {
+    grid-template-columns: 1fr;
+    display: flex;
+    flex-direction: column;
+    min-height: auto;
+  }
+
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--border);
+    max-height: 260px;
+  }
+
+  .incident-list {
+    max-height: 200px;
+  }
+
+  .detail-pane {
+    padding: 14px;
+    overflow-y: visible;
+  }
+
+  .grid-2 {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-header {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  .detail-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 640px) {
+  .metrics-bar {
+    grid-template-columns: 1fr;
+  }
+
+  .card-top {
+    flex-wrap: wrap;
+  }
+
+  .kpi-row {
+    gap: 12px;
+  }
+
+  .detail-actions .btn {
+    flex: 1;
+    justify-content: center;
+  }
+}
+

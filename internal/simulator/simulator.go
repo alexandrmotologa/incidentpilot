@@ -72,6 +72,7 @@ func RunScenarioSimulation(
 		_, _ = runGit(repoDir, "add", ".")
 		_, _ = runGit(repoDir, "commit", "-m", "chore: release v1.8.0")
 		_, _ = runGit(repoDir, "tag", "-a", "v1.8.0", "-m", "Release v1.8.0")
+		time.Sleep(100 * time.Millisecond)
 
 		lines[81] = "    # removed zero guard for batch speed"
 		lines[82] = "    return amount / count"
@@ -199,6 +200,7 @@ func RunScenarioSimulation(
 		_, _ = runGit(repoDir, "add", ".")
 		_, _ = runGit(repoDir, "commit", "-m", "chore: release v2.4.1")
 		_, _ = runGit(repoDir, "tag", "-a", "v2.4.1", "-m", "Release v2.4.1")
+		time.Sleep(100 * time.Millisecond)
 
 		lines[110] = "    // removed nil guard for fast-path"
 		lines[113] = "    return gateway.Submit(req.Customer.ID)"
