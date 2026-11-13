@@ -1,10 +1,13 @@
 services:
   incidentpilot:
     build: .
+    container_name: incidentpilot
     ports:
       - "8080:8080"
     env_file:
       - .env
     volumes:
       - ./data:/app/data
+      - ./incidentpilot.yaml:/app/incidentpilot.yaml:ro
+      - ./runbooks.yaml:/app/runbooks.yaml:ro
     restart: unless-stopped

@@ -1,15 +1,25 @@
+# Binaries & build artifacts
+*.exe
+/incidentpilot
+bin/
+dist/
+
+# Go
+*.out
+*.test
+
+# Node & UI
+node_modules/
+ui/node_modules/
+ui/dist/
+
 # Python
 __pycache__/
 *.py[cod]
-*$py.class
-*.egg-info/
-.Python
-build/
-dist/
-.venv/
-venv/
 .pytest_cache/
 .ruff_cache/
+.venv/
+venv/
 
 # Environment & local state
 .env
@@ -23,3 +33,4 @@ tmp_demo/
 # IDE
 .vscode/
 .idea/
+.DS_Store

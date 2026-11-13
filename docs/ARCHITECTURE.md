@@ -1,14 +1,60 @@
 # Architecture
 
-IncidentPilot runs as a single async FastAPI service backed by SQLite (WAL mode) and an in-process investigation orchestrator.
+IncidentPilot runs as a single compiled Go daemon with an embedded React 19 War Room Studio, backed by SQLite in WAL mode and an in-process investigation orchestrator.
 
-## Investigation flow
+## System Topology
 
-1. Webhook ingestion: An alert arrives at `/webhooks/pagerduty`, `/webhooks/alertmanager`, `/webhooks/sentry`, or `/webhooks/generic`. After signature or token verification, the parser normalizes it into an `IncidentEvent` with a deterministic fingerprint.
-2. Auto-resolution and MTTR: If the webhook carries a resolution event (`status: "resolved"` or `event_type: "incident.resolved"`), the orchestrator resolves matching active incidents and computes the exact MTTR (Mean Time to Resolution) in seconds.
-3. Deduplication: `IncidentStore.find_active_by_fingerprint` checks whether an active incident with the same fingerprint was created within `INCIDENTPILOT_DEDUP_WINDOW_SECONDS` (default 300s). If so, `alert_count` increments and no duplicate investigation runs.
-4. Per-service routing: `routing.resolve_settings_for_service` checks `services.yaml` for custom repositories, Slack channels, and rollback providers.
-5. Parallel collection and baseline comparison: `IncidentOrchestrator.investigate` collects error logs for the last 15 minutes, queries a prior 45-minute baseline window to calculate error spike ratios, and pulls commit history and release tags concurrently under `asyncio.wait_for`.
-6. Stack trace extraction and git blame: `parse_stacktrace` extracts structured frames across Go, Python, Node.js/TypeScript, Java, and Rust. The orchestrator runs `git blame` against the crash lines to pinpoint who authored them.
-7. Correlation and runbook matching: `correlate_incident` scores candidate commits. `match_runbooks` evaluates the alert against built-in and custom runbooks (`runbooks.yaml`) for operational issues like OOMKilled containers or connection pool exhaustion.
-8. Dispatch and dashboard sync: `SlackClient.send_brief` posts a Block Kit message with `[Confirm Rollback]` and `[Dismiss]` actions, and the orchestrator emits an SSE event to connected dashboard clients.
+```
+                         +-----------------------------+
+                         |      Monitoring Sources     |
+                         | PagerDuty, Alertmanager,    |
+                         | Sentry, Datadog, Generic    |
+                         +--------------+--------------+
+                                        |
+                                        v Webhook Ingestion (HMAC/Bearer)
+                         +--------------+--------------+
+                         | IncidentPilot Single Binary |
+                         | (< 25MB RAM, Pure-Go SQLite)|
+                         +--------------+--------------+
+                                        |
+             +--------------------------+--------------------------+
+             |                                                     |
+             v                                                     v
++-------------------------------+             +----------------------------------+
+| Telemetry & Git Collectors    |             | SRE Investigation Engine         |
+| - Loki / JSONL error logs     |             | - AST & Diff Proximity Correlator|
+| - Prometheus metric queries   | ----------> | - Git Blame Line Attribution     |
+| - Git history & deployments   |             | - Baseline Spike Ratio (15m/45m) |
+| - Universal stack trace parser|             | - Operational Runbook Matcher    |
++-------------------------------+             +-----------------+----------------+
+                                                                |
+                                        +-----------------------+
+                                        |
+                                        v
+                         +--------------+--------------+
+                         |     Synthesized Incident    |
+                         |            Brief            |
+                         +--------------+--------------+
+                                        |
+             +--------------------------+--------------------------+
+             |                                                     |
+             v                                                     v
++-------------------------------+             +----------------------------------+
+| Slack Interactive Card        |             | Embedded React 19 War Room Studio|
+| - Root cause & confidence     |             | - Live SSE Incident Stream       |
+| - Suspect commit & diff       |             | - Aggregate SRE Health Metrics   |
+| - [Confirm Rollback] Button   |             | - Automated Postmortem Generator |
++-------------------------------+             +----------------------------------+
+```
+
+## Investigation Pipeline
+
+1. **Webhook Ingestion & Verification**: Webhooks arrive at `/webhooks/pagerduty`, `/webhooks/alertmanager`, `/webhooks/sentry`, `/webhooks/datadog`, or `/webhooks/generic`. Requests undergo HMAC-SHA256 signature or Bearer token validation before being normalized into an `IncidentEvent` with a deterministic SHA256 fingerprint.
+2. **Auto-Resolution & MTTR**: When an alert provider signals that an alert has resolved (`is_resolved == true` or `incident.resolved`), IncidentPilot resolves matching active incidents and computes the exact MTTR (Mean Time to Resolution) in seconds.
+3. **Deduplication Cooldown**: `Store.FindActiveByFingerprint` checks for ongoing investigations with the same fingerprint inside the configurable `dedup_window_seconds` window. Duplicate alerts increment `alert_count` and log a timeline step without triggering duplicate investigations.
+4. **Declarative Service Resolution**: The orchestrator matches the alert's service against `incidentpilot.yaml` service definitions, resolving custom repository paths, GitHub credentials, Loki/Prometheus endpoints, and Slack channels.
+5. **Parallel Telemetry Collection**: The engine queries error logs from the incident window ($t \pm 15$ min) and a baseline window (prior 45 min) to calculate error spike ratios. Concurrently, it queries Prometheus rate vectors and fetches recent Git commits and deployment tags.
+6. **Stack Trace Parsing & Git Blame**: Universal stack trace parsing extracts call frames across Go, Python, Node.js/TypeScript, Java, and Rust. For lines where crashes occurred, `git blame` pinpoints the author and commit SHA.
+7. **AST Proximity & Correlation Scoring**: The correlator scores commits from 0 to 100 based on file path matches, diff hunk line overlaps, blame line attribution, recency decay, and error keyword tokens.
+8. **Operational Runbook Matching**: If infrastructure failure patterns are detected (such as container OOMKilled events, database connection pool exhaustion, full disks, or TLS certificate expiry), the engine attaches operational runbook steps from `runbooks.yaml`.
+9. **Dispatch & Studio Sync**: The synthesized Incident Brief is dispatched to Slack as a Block Kit interactive message, persisted to SQLite, and broadcast via Server-Sent Events (SSE) to the embedded React 19 War Room Studio.

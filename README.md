@@ -1,137 +1,188 @@
 # IncidentPilot
 
-IncidentPilot is an autonomous on-call incident responder and log, stack trace, and Git deployment correlator. When an alert arrives from PagerDuty, Prometheus Alertmanager, or Sentry, IncidentPilot pulls error logs from the last 15 minutes, parses stack traces, runs `git blame` on crash lines, inspects recent commits and deployments, matches operational runbooks, and posts an Incident Brief to Slack with an interactive `[Confirm Rollback]` button.
+IncidentPilot is an autonomous on-call incident responder and log, stack trace, and Git deployment correlator. When an alert arrives from PagerDuty, Prometheus Alertmanager, Sentry, or Datadog, IncidentPilot pulls error logs from the last 15 minutes, parses stack traces, attributes crash lines with `git blame`, inspects recent commits and deployments, matches operational runbooks, and posts an Incident Brief to Slack with an interactive `[Confirm Rollback]` button.
 
-## What it does
+Packaged as a single Go binary under 25MB RAM with an embedded React 19 War Room Studio and a pure-Go SQLite persistence layer (`modernc.org/sqlite`, zero CGO runtime dependencies).
 
-1. Ingests webhooks from PagerDuty (V2 and V3), Prometheus Alertmanager (v4), Sentry, or custom JSON monitors, with HMAC-SHA256 and Bearer token verification.
-2. Deduplicates repeated alerts by fingerprint inside a configurable cooldown window so alert storms do not spawn duplicate investigations.
-3. Automatically marks incidents as resolved and computes MTTR when monitoring systems send resolution webhooks (`status == "resolved"` or `incident.resolved`).
-4. Queries error logs from the last 15 minutes and compares them against a prior 45-minute baseline to detect regressions and spike ratios (JSONL files, Grafana Loki, or HTTP log APIs).
-5. Inspects recent Git commits, releases, and lines via `git blame` across Go, Python, Node.js/TypeScript, Java, and Rust stack traces.
-6. Scores and ranks the top 3 suspect commits by modified file match, diff hunk line proximity, `git blame` line authoring, commit recency, and keyword overlap.
-7. Matches operational runbooks from `runbooks.yaml` for infrastructure or resource failures (such as OOMKilled containers, database pool exhaustion, full disks, or TLS expiry).
-8. Supports per-service routing via `services.yaml` for teams managing multiple microservices with separate repositories, Slack channels, and rollback workflows.
-9. Generates a root-cause brief (deterministically from collected evidence, or via an OpenAI-compatible LLM endpoint when `INCIDENTPILOT_LLM_API_KEY` is set) and sends it to Slack with interactive `[Confirm Rollback]` and `[Dismiss]` buttons.
-10. Executes rollbacks via local Git checkout/command, GitHub Actions `workflow_dispatch`, or a signed deployment webhook, while recording an audit trail in SQLite.
-11. Serves a live web dashboard with real-time SSE updates, aggregate SRE operational metrics, incident filtering, an on-demand incident simulator, and Markdown postmortem export.
+## Core Capabilities
 
-## Quick start
+1. **Multi-Source Webhook Ingestion**: Ingests alerts from PagerDuty (V2/V3), Prometheus Alertmanager (v4), Sentry, Datadog, or custom JSON webhooks with HMAC-SHA256 signature and Bearer token verification.
+2. **Deduplication & Cooldown**: Deduplicates repeating alerts by deterministic SHA256 fingerprint within a configurable window (default 300s) to prevent alert storm duplicate runs.
+3. **Automated Resolution & MTTR**: Resolves matching active incidents automatically upon receiving resolution payloads and records Mean Time to Resolution (MTTR) metrics.
+4. **Telemetry & Log Extraction**: Fetches error logs from the incident window (last 15 minutes) and compares them against a 45-minute baseline to detect regressions and calculate spike ratios across JSONL files or Grafana Loki.
+5. **Universal Stack Trace Parsing**: Parses call frames across Go, Python, Node.js/TypeScript, Java, and Rust.
+6. **AST Proximity & Git Blame Correlation**: Scores candidate commits (0 to 100) using modified file matching (45 pts), diff hunk line proximity (25 pts), `git blame` author attribution (20 pts), recency decay (15 pts), and error keyword tokens (15 pts).
+7. **Operational Runbook Matching**: Detects infrastructure failures (OOMKilled pods, database connection pool exhaustion, full disks, TLS certificate expiry, 429 upstream rate limits) and attaches prescriptive diagnostic steps from `runbooks.yaml`.
+8. **Declarative Service Configuration**: Configured via `incidentpilot.yaml` with environment variable expansion (`${VAR}`) for multi-service environments.
+9. **Slack Block Kit Dispatcher**: Formats interactive Slack briefs with collapsible evidence and `[Confirm Rollback]` / `[Dismiss]` buttons.
+10. **Multi-Provider Rollback Execution**: Executes rollbacks via local Git checkout/command, GitHub Actions workflow dispatch, or signed deployment webhooks with complete audit history.
+11. **Embedded React 19 War Room Studio**: High-density operational cockpit served directly from the single binary with real-time SSE stream, live metrics bar, commit diff viewer, runbook viewer, and Markdown postmortem exporter.
 
-### 1. Install
+## Quick Start
+
+### 1. Build from Source
+
+Requirements: Go 1.24+ and Node.js 20+ (for building the embedded UI).
 
 ```bash
 git clone https://github.com/alexandrmotologa/incidentpilot.git
 cd incidentpilot
-python -m venv .venv
-# Linux/macOS: source .venv/bin/activate
-# Windows PowerShell: .\.venv\Scripts\Activate.ps1
-pip install -e ".[dev]"
+
+# Build embedded React 19 UI
+cd ui
+npm ci
+npm run build
+cd ..
+
+# Build single binary
+go build -o incidentpilot.exe ./cmd/incidentpilot
 ```
 
-### 2. Run the end-to-end local simulation
-
-The `simulate` command creates a temporary Git repository with `v2.4.1` and `v2.4.2` releases (introducing a nil pointer dereference in `pkg/checkout/checkout.go:114`), writes 15-minute JSONL error logs, fires a PagerDuty V3 webhook, correlates the regression, and executes a real Git rollback to `v2.4.1`:
+Or build with Docker:
 
 ```bash
-incidentpilot simulate
+docker build -t incidentpilot:latest .
 ```
 
-### 3. Start the server and web dashboard
+### 2. Run Local End-to-End Simulation
+
+The `simulate` command creates a temporary Git repository with releases `v2.4.1` and `v2.4.2` (introducing a nil pointer dereference in `pkg/checkout/checkout.go:114`), generates 15-minute JSONL error logs, triggers an alert investigation, correlates the suspect commit, and executes a verified Git rollback to `v2.4.1`:
 
 ```bash
-cp .env.example .env
-incidentpilot serve --host 0.0.0.0 --port 8080
+./incidentpilot simulate
 ```
 
-Open `http://localhost:8080` to view the live incident feed, SRE metrics, top suspect commits, operational runbooks, and interactive simulator.
+### 3. Start the Daemon and War Room Studio
 
-## Interactive Web Simulator
+```bash
+cp incidentpilot.example.yaml incidentpilot.yaml
+./incidentpilot serve --config ./incidentpilot.yaml --port 8080
+```
 
-The web dashboard includes a built-in simulation dropdown supporting three scenarios:
-- **Go nil pointer (PagerDuty)**: Simulates a checkout panic and checks out previous release `v2.4.1`.
-- **Python ZeroDivision (Sentry)**: Simulates an unhandled zero division in billing calculations and correlates recent commits.
-- **OOMKilled Runbook (Alertmanager)**: Simulates pod memory eviction (exit code 137) and attaches diagnostic runbook steps.
+Open `http://localhost:8080` to access the embedded React 19 War Room Studio.
 
-## API endpoints
+## CLI Usage
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `GET` | `/` | Web command center dashboard (SSE live updates) |
-| `GET` | `/healthz` | Health check and active provider configuration |
-| `GET` | `/api/metrics` | Aggregate SRE operational metrics (incidents, MTTR, hit rate) |
-| `POST` | `/api/simulate` | Trigger an on-demand incident simulation (`go_nil_pointer`, `python_checkout_error`, `oom_runbook`) |
-| `POST` | `/webhooks/pagerduty` | PagerDuty V2/V3 webhook receiver (`X-PagerDuty-Signature`) |
-| `POST` | `/webhooks/alertmanager` | Prometheus Alertmanager v4 receiver (`Authorization: Bearer`) |
-| `POST` | `/webhooks/sentry` | Sentry issue/error receiver (`Sentry-Hook-Signature`) |
-| `POST` | `/webhooks/generic` | Generic normalized alert receiver |
-| `POST` | `/integrations/slack/actions` | Slack interactive button handler (`X-Slack-Signature`) |
-| `GET` | `/api/incidents` | List recent incidents with `service`, `severity`, and `status` query filters |
-| `GET` | `/api/incidents/{id}` | Get full incident brief, timeline, and rollback history |
-| `POST` | `/api/incidents/{id}/rollback` | Trigger rollback from API or dashboard |
-| `POST` | `/api/incidents/{id}/dismiss` | Dismiss an incident |
-| `GET` | `/api/incidents/{id}/postmortem.md` | Export a Markdown postmortem |
-| `GET` | `/api/events` | Server-Sent Events stream for dashboard updates |
+```text
+IncidentPilot: Autonomous On-Call Incident Responder & Telemetry Correlator
 
-## Multi-service routing (`services.yaml`)
+Usage:
+  incidentpilot [command] [flags]
 
-Specify custom repositories, Slack channels, and rollback providers per microservice in `services.yaml`:
+Commands:
+  serve       Start the webhook receiver and embedded War Room Studio
+  replay      Re-investigate a past incident from stored telemetry or logs
+  list        List recent incidents and their status
+  simulate    Run an end-to-end local incident simulation scenario
+```
+
+### Examples
+
+```bash
+# Start server on custom port
+incidentpilot serve --config incidentpilot.yaml --port 8080
+
+# List active incidents
+incidentpilot list --status investigating
+
+# Replay an investigation for an existing incident
+incidentpilot replay --id inc-8f2a1c99
+
+# Run a specific simulation scenario
+incidentpilot simulate --scenario go_nil_pointer
+incidentpilot simulate --scenario python_checkout_error
+incidentpilot simulate --scenario oom_runbook
+```
+
+## Declarative Service Configuration (`incidentpilot.yaml`)
 
 ```yaml
-services:
-  checkout-api:
-    git_provider: local
-    local_repo_path: .
-    slack_channel: "#oncall-checkout"
-    rollback_provider: local_git
+version: "1"
+host: "0.0.0.0"
+port: 8080
+database_path: "./data/incidentpilot.db"
+dedup_window_seconds: 300
+investigation_timeout_seconds: 60
+log_window_minutes: 15
+git_lookback_hours: 24
 
-  billing-worker:
-    git_provider: github
-    github_repo: acme-corp/billing-service
-    slack_channel: "#oncall-billing"
-    rollback_provider: github_workflow
+# Webhook authentication secrets
+pagerduty_webhook_secret: "${PAGERDUTY_WEBHOOK_SECRET}"
+sentry_client_secret: "${SENTRY_CLIENT_SECRET}"
+alertmanager_bearer_token: "${ALERTMANAGER_BEARER_TOKEN}"
+datadog_webhook_token: "${DATADOG_WEBHOOK_TOKEN}"
+
+# Monitored microservices
+services:
+  - name: "checkout-api"
+    repo: "alexandrmotologa/incidentpilot"
+    local_repo_path: "."
+    github_token: "${GITHUB_TOKEN}"
+    slack_channel: "#sre-war-room"
+    observability:
+      loki_url: "http://localhost:3100"
+      prometheus_url: "http://localhost:9090"
+      error_metric_query: 'sum(rate(http_requests_total{status=~"5.."}[2m]))'
+      log_file_path: "./data/service.log.jsonl"
+    mitigation:
+      allow_auto_rollback: false
+      rollback_provider: "local_git"
+      rollback_command: ""
+
+notifications:
+  slack:
+    webhook_url: "${SLACK_WEBHOOK_URL}"
+    bot_token: "${SLACK_BOT_TOKEN}"
+    channel: "#sre-war-room"
+    signing_secret: "${SLACK_SIGNING_SECRET}"
+
+runbooks_path: "./runbooks.yaml"
 ```
 
-## Operational runbooks (`runbooks.yaml`)
+## Operational Runbooks (`runbooks.yaml`)
 
-Define custom runbook patterns to attach prescriptive diagnostic steps when non-code incidents occur:
+IncidentPilot includes built-in runbooks for infrastructure failures, extensible via `runbooks.yaml`:
 
 ```yaml
 runbooks:
-  - id: redis-oom
-    title: Redis Out Of Memory / Eviction Spike
-    pattern: "(OOM command not allowed|eviction policy reached|maxmemory reached)"
+  - id: "oom-killed"
+    title: "Container OOMKilled / Memory Exhaustion"
+    pattern: "(?i)(oomkilled|out of memory|cannot allocate memory|exit code 137|memory limit)"
     steps:
-      - "Inspect Redis memory info with `INFO memory`."
-      - "Identify key memory consumers using `redis-cli --bigkeys`."
-      - "Verify maxmemory-policy setting or raise cluster memory quota."
+      - "Check pod memory usage and recent heap allocation changes (`kubectl top pods`)."
+      - "Inspect memory limits in deployment manifests and compare against p99 RSS."
+      - "Capture a heap profile before restarting or scaling replicas horizontally."
+
+  - id: "db-pool-exhausted"
+    title: "Database Connection Pool Exhaustion"
+    pattern: "(?i)(connection pool|too many connections|remaining connection slots|pool timeout)"
+    steps:
+      - "Check active vs idle database connections (`pg_stat_activity` or pool metrics)."
+      - "Look for unclosed transactions or long-running queries blocking pool release."
+      - "Temporarily raise pool max connections or shed non-critical background workers."
 ```
 
-## Configuration
+## API Endpoints
 
-All settings use the `INCIDENTPILOT_` prefix (see `.env.example`):
-
-- `INCIDENTPILOT_LOG_PROVIDER`: `jsonl`, `loki`, or `http`
-- `INCIDENTPILOT_GIT_PROVIDER`: `local` or `github`
-- `INCIDENTPILOT_ROLLBACK_PROVIDER`: `local_git`, `github_workflow`, or `webhook`
-- `INCIDENTPILOT_SERVICES_CONFIG_PATH`: path to `services.yaml` (default: `./services.yaml`)
-- `INCIDENTPILOT_RUNBOOKS_CONFIG_PATH`: path to `runbooks.yaml` (default: `./runbooks.yaml`)
-- `INCIDENTPILOT_LLM_API_KEY`: optional OpenAI-compatible API key for LLM brief synthesis (falls back to deterministic synthesis when unset)
-- `INCIDENTPILOT_SLACK_WEBHOOK_URL` or `INCIDENTPILOT_SLACK_BOT_TOKEN` + `INCIDENTPILOT_SLACK_CHANNEL`: Slack delivery targets
-
-## Documentation
-
-- [Architecture](docs/ARCHITECTURE.md)
-- [Webhooks and Security](docs/WEBHOOKS.md)
-- [Correlation Scoring](docs/CORRELATION.md)
-- [Slack and Rollback Execution](docs/SLACK_AND_ROLLBACK.md)
-
-## Running tests
-
-```bash
-pytest -v
-```
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/` | Embedded React 19 War Room Studio |
+| `GET` | `/healthz` | System health check and runtime status |
+| `GET` | `/api/metrics` | SRE operational metrics (Total incidents, MTTR, hit rate) |
+| `GET` | `/api/incidents` | List incidents with `service`, `severity`, and `status` query filters |
+| `GET` | `/api/incidents/{id}` | Full incident record, brief, timeline, and rollback history |
+| `POST` | `/api/incidents/{id}/rollback` | Trigger verified rollback for an incident |
+| `POST` | `/api/incidents/{id}/dismiss` | Dismiss an incident |
+| `GET` | `/api/incidents/{id}/postmortem.md` | Download incident postmortem in Markdown format |
+| `POST` | `/api/simulate` | Trigger on-demand simulation (`go_nil_pointer`, `python_checkout_error`, `oom_runbook`) |
+| `GET` | `/api/events` | Server-Sent Events (SSE) stream for live updates |
+| `POST` | `/webhooks/pagerduty` | PagerDuty V2/V3 webhook receiver (`X-PagerDuty-Signature`) |
+| `POST` | `/webhooks/alertmanager` | Prometheus Alertmanager v4 receiver (`Authorization: Bearer`) |
+| `POST` | `/webhooks/sentry` | Sentry issue/error webhook receiver (`Sentry-Hook-Signature`) |
+| `POST` | `/webhooks/datadog` | Datadog webhook receiver (`DD-WEBHOOK-TOKEN`) |
+| `POST` | `/webhooks/generic` | Normalized JSON alert receiver |
+| `POST` | `/integrations/slack/actions` | Slack interactivity callback receiver (`X-Slack-Signature`) |
 
 ## License
 
-MIT
+MIT License. See [LICENSE](LICENSE) for details.
