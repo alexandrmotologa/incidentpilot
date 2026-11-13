@@ -26,6 +26,9 @@ func main() {
 	command := os.Args[1]
 
 	switch command {
+	case "help", "-h", "--help":
+		printUsage()
+		os.Exit(0)
 	case "serve":
 		cmdServe(os.Args[2:])
 	case "replay":
