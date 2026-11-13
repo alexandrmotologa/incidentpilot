@@ -29,7 +29,10 @@ const (
 	StatusInvestigating    IncidentStatus = "investigating"
 	StatusBriefSent        IncidentStatus = "brief_sent"
 	StatusRollbackPending  IncidentStatus = "rollback_pending"
+	StatusMitigating       IncidentStatus = "mitigating"
 	StatusRolledBack       IncidentStatus = "rolled_back"
+	StatusVerifiedHealthy  IncidentStatus = "verified_healthy"
+	StatusEscalated        IncidentStatus = "escalated"
 	StatusRollbackFailed   IncidentStatus = "rollback_failed"
 	StatusDismissed        IncidentStatus = "dismissed"
 	StatusResolved         IncidentStatus = "resolved"
@@ -170,19 +173,39 @@ type RollbackRecord struct {
 	Error         string    `json:"error"`
 }
 
+type HealthVerificationRecord struct {
+	Status           string     `json:"status"` // "in_progress", "healthy", "unhealthy"
+	StartedAt        time.Time  `json:"started_at"`
+	CompletedAt      *time.Time `json:"completed_at,omitempty"`
+	InitialErrorRate float64    `json:"initial_error_rate"`
+	FinalErrorRate   float64    `json:"final_error_rate"`
+	Samples          []float64  `json:"samples"`
+	Detail           string     `json:"detail"`
+}
+
+type AutoRollbackPolicy struct {
+	Enabled             bool     `json:"enabled" yaml:"enabled"`
+	Environments        []string `json:"environments" yaml:"environments"`
+	MinConfidence       float64  `json:"min_confidence" yaml:"min_confidence"`
+	MinSpikeRatio       float64  `json:"min_spike_ratio" yaml:"min_spike_ratio"`
+	MaxRollbackAgeHours int      `json:"max_rollback_age_hours" yaml:"max_rollback_age_hours"`
+}
+
 type IncidentRecord struct {
-	ID              string           `json:"id"`
-	Event           IncidentEvent    `json:"event"`
-	Status          IncidentStatus   `json:"status"`
-	AlertCount      int              `json:"alert_count"`
-	CreatedAt       time.Time        `json:"created_at"`
-	UpdatedAt       time.Time        `json:"updated_at"`
-	ResolvedAt      *time.Time       `json:"resolved_at,omitempty"`
-	MTTRSeconds     *float64         `json:"mttr_seconds,omitempty"`
-	Brief           *IncidentBrief   `json:"brief,omitempty"`
-	Timeline        []TimelineStep   `json:"timeline"`
-	Rollbacks       []RollbackRecord `json:"rollbacks"`
-	SlackMessageTS  string           `json:"slack_message_ts,omitempty"`
+	ID                 string                    `json:"id"`
+	Event              IncidentEvent             `json:"event"`
+	Status             IncidentStatus            `json:"status"`
+	AlertCount         int                       `json:"alert_count"`
+	CreatedAt          time.Time                 `json:"created_at"`
+	UpdatedAt          time.Time                 `json:"updated_at"`
+	ResolvedAt         *time.Time                `json:"resolved_at,omitempty"`
+	MTTRSeconds        *float64                  `json:"mttr_seconds,omitempty"`
+	Brief              *IncidentBrief            `json:"brief,omitempty"`
+	Timeline           []TimelineStep            `json:"timeline"`
+	Rollbacks          []RollbackRecord          `json:"rollbacks"`
+	SlackMessageTS     string                    `json:"slack_message_ts,omitempty"`
+	PostmortemURL      string                    `json:"postmortem_url,omitempty"`
+	HealthVerification *HealthVerificationRecord `json:"health_verification,omitempty"`
 }
 
 type SreMetrics struct {

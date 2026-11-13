@@ -11,6 +11,7 @@ import (
 	"github.com/alexandrmotologa/incidentpilot/internal/collectors"
 	"github.com/alexandrmotologa/incidentpilot/internal/config"
 	"github.com/alexandrmotologa/incidentpilot/internal/correlator"
+	"github.com/alexandrmotologa/incidentpilot/internal/integrations"
 	"github.com/alexandrmotologa/incidentpilot/internal/rollback"
 	"github.com/alexandrmotologa/incidentpilot/internal/runbooks"
 	"github.com/alexandrmotologa/incidentpilot/internal/slack"
@@ -25,16 +26,30 @@ type EventBroadcast struct {
 }
 
 type Orchestrator struct {
-	cfg          *config.Config
-	store        *storage.Store
-	logCollector collectors.LogCollector
-	gitProvider  collectors.GitProvider
-	slackClient  *slack.Client
-	rollbackExec *rollback.Executor
-	promColl     *collectors.PrometheusCollector
+	cfg             *config.Config
+	store           *storage.Store
+	logCollector    collectors.LogCollector
+	gitProvider     collectors.GitProvider
+	slackClient     *slack.Client
+	rollbackExec    *rollback.Executor
+	promColl        *collectors.PrometheusCollector
+	twoWay          *integrations.TwoWayClient
+	syncHealthCheck bool
 
 	subscribers map[chan EventBroadcast]bool
 	subMu       sync.RWMutex
+}
+
+func (o *Orchestrator) SetSyncHealthCheck(sync bool) {
+	o.syncHealthCheck = sync
+}
+
+func (o *Orchestrator) SetTwoWayClient(tw *integrations.TwoWayClient) {
+	o.twoWay = tw
+}
+
+func (o *Orchestrator) GetSlackClient() *slack.Client {
+	return o.slackClient
 }
 
 func NewOrchestrator(
@@ -73,6 +88,7 @@ func NewOrchestrator(
 		slackClient:  slackCli,
 		rollbackExec: rbExec,
 		promColl:     &collectors.PrometheusCollector{},
+		twoWay:       integrations.NewTwoWayClient(),
 		subscribers:  make(map[chan EventBroadcast]bool),
 	}
 }
@@ -146,6 +162,13 @@ func (o *Orchestrator) IngestEvent(ctx context.Context, event models.IncidentEve
 		return nil, false, err
 	}
 	o.Broadcast("incident_created", record.ID)
+
+	// Two-Way Sync: Auto-Acknowledge on PagerDuty if configured
+	if event.Source == models.SourcePagerDuty && o.cfg.PagerDutyAPIToken != "" && event.ExternalID != "" {
+		go func() {
+			_ = o.twoWay.PagerDutyAcknowledge(context.Background(), o.cfg.PagerDutyAPIToken, event.ExternalID, "incidentpilot@local")
+		}()
+	}
 
 	if waitForInvestigation {
 		rec, err := o.Investigate(ctx, record.ID)
@@ -364,6 +387,25 @@ func (o *Orchestrator) Investigate(ctx context.Context, incidentID string) (*mod
 		return nil, err
 	}
 	o.Broadcast("incident_updated", record.ID)
+
+	// Two-Way Sync: Update PagerDuty & Sentry
+	if ev.Source == models.SourcePagerDuty && o.cfg.PagerDutyAPIToken != "" && ev.ExternalID != "" {
+		go func() {
+			note := fmt.Sprintf("IncidentPilot Investigation Brief: %s | Suspect: %s | Rollback: %s",
+				brief.ProbableCause, brief.TopCandidate.Commit.ShortSHA, brief.RollbackTarget)
+			_ = o.twoWay.PagerDutyAddNote(context.Background(), o.cfg.PagerDutyAPIToken, ev.ExternalID, "incidentpilot@local", note)
+		}()
+	}
+	if ev.Source == models.SourceSentry && o.cfg.SentryAuthToken != "" && ev.ExternalID != "" {
+		go func() {
+			comment := fmt.Sprintf("IncidentPilot: %s (Recommended Rollback: %s)", brief.ProbableCause, brief.RollbackTarget)
+			_ = o.twoWay.SentryAddComment(context.Background(), o.cfg.SentryAuthToken, ev.ExternalID, comment)
+		}()
+	}
+
+	// Evaluate Autonomous Rollback Guardrails
+	o.evaluateAutoRollbackPolicy(ctx, record, brief)
+
 	return record, nil
 }
 
@@ -418,6 +460,18 @@ func (o *Orchestrator) TriggerRollback(ctx context.Context, incidentID, targetVe
 			Stage:     "rollback_executed",
 			Detail:    fmt.Sprintf("Rolled back to %s: %s", target, rb.Output),
 		})
+		_ = o.store.SaveIncident(ctx, record)
+		o.Broadcast("incident_updated", record.ID)
+
+		if o.syncHealthCheck {
+			o.verifyHealthPostRollback(ctx, record.ID, record.Event.Service, target)
+			if updated, err := o.store.GetIncident(ctx, record.ID); err == nil && updated != nil {
+				record = updated
+			}
+		} else {
+			go o.verifyHealthPostRollback(context.Background(), record.ID, record.Event.Service, target)
+		}
+		return record, rb, nil
 	} else {
 		record.Status = models.StatusRollbackFailed
 		record.Timeline = append(record.Timeline, models.TimelineStep{
@@ -425,11 +479,196 @@ func (o *Orchestrator) TriggerRollback(ctx context.Context, incidentID, targetVe
 			Stage:     "rollback_executed",
 			Detail:    fmt.Sprintf("Rollback to %s failed: %s", target, rb.Error),
 		})
+		_ = o.store.SaveIncident(ctx, record)
+		o.Broadcast("incident_updated", record.ID)
+		return record, rb, nil
 	}
+}
+
+func (o *Orchestrator) evaluateAutoRollbackPolicy(ctx context.Context, record *models.IncidentRecord, brief *models.IncidentBrief) {
+	if brief == nil || brief.RollbackTarget == "" {
+		return
+	}
+
+	svcCfg := o.cfg.GetService(record.Event.Service)
+	if svcCfg == nil {
+		return
+	}
+
+	policy := svcCfg.Mitigation.AutoRollback
+	allowed := false
+
+	if svcCfg.Mitigation.AllowAutoRollback {
+		allowed = true
+	}
+
+	if policy.Enabled {
+		allowed = true
+
+		if len(policy.Environments) > 0 {
+			envMatched := false
+			for _, e := range policy.Environments {
+				if strings.EqualFold(e, record.Event.Environment) {
+					envMatched = true
+					break
+				}
+			}
+			if !envMatched {
+				record.Timeline = append(record.Timeline, models.TimelineStep{
+					Timestamp: time.Now().UTC(),
+					Stage:     "guardrail_check_skipped",
+					Detail:    fmt.Sprintf("Auto-rollback skipped: environment '%s' not in policy %v", record.Event.Environment, policy.Environments),
+				})
+				_ = o.store.SaveIncident(ctx, record)
+				return
+			}
+		}
+
+		if policy.MinConfidence > 0 && brief.Confidence < policy.MinConfidence {
+			record.Timeline = append(record.Timeline, models.TimelineStep{
+				Timestamp: time.Now().UTC(),
+				Stage:     "guardrail_check_skipped",
+				Detail:    fmt.Sprintf("Auto-rollback skipped: confidence %.1f%% below required %.1f%%", brief.Confidence, policy.MinConfidence),
+			})
+			_ = o.store.SaveIncident(ctx, record)
+			return
+		}
+
+		if policy.MinSpikeRatio > 0 && (brief.ErrorSpikeRatio == nil || *brief.ErrorSpikeRatio < policy.MinSpikeRatio) {
+			currentRatio := 0.0
+			if brief.ErrorSpikeRatio != nil {
+				currentRatio = *brief.ErrorSpikeRatio
+			}
+			record.Timeline = append(record.Timeline, models.TimelineStep{
+				Timestamp: time.Now().UTC(),
+				Stage:     "guardrail_check_skipped",
+				Detail:    fmt.Sprintf("Auto-rollback skipped: spike ratio %.1fx below required %.1fx", currentRatio, policy.MinSpikeRatio),
+			})
+			_ = o.store.SaveIncident(ctx, record)
+			return
+		}
+	}
+
+	if allowed {
+		record.Timeline = append(record.Timeline, models.TimelineStep{
+			Timestamp: time.Now().UTC(),
+			Stage:     "auto_rollback_triggered",
+			Detail:    fmt.Sprintf("Autonomous rollback guardrails passed. Reverting to %s", brief.RollbackTarget),
+		})
+		_ = o.store.SaveIncident(ctx, record)
+		o.Broadcast("incident_updated", record.ID)
+
+		go func() {
+			_, _, _ = o.TriggerRollback(context.Background(), record.ID, brief.RollbackTarget, "autonomous-policy")
+		}()
+	}
+}
+
+func (o *Orchestrator) verifyHealthPostRollback(ctx context.Context, incidentID, service, target string) {
+	record, err := o.store.GetIncident(ctx, incidentID)
+	if err != nil || record == nil {
+		return
+	}
+
+	record.Status = models.StatusMitigating
+	started := time.Now().UTC()
+	record.HealthVerification = &models.HealthVerificationRecord{
+		Status:    "in_progress",
+		StartedAt: started,
+		Detail:    fmt.Sprintf("Verifying health post-rollback for service '%s'...", service),
+	}
+	_ = o.store.SaveIncident(ctx, record)
+	o.Broadcast("incident_updated", record.ID)
+
+	waitSec := o.cfg.HealthCheckDurationSec
+	if waitSec <= 0 {
+		waitSec = 30
+	}
+	if o.syncHealthCheck {
+		waitSec = 1
+	}
+
+	time.Sleep(time.Duration(waitSec) * time.Second)
+
+	now := time.Now().UTC()
+	postLogs, _ := o.logCollector.FetchErrorLogs(ctx, service, started, now)
+	errCount := len(postLogs)
+
+	recUpdated, err := o.store.GetIncident(ctx, incidentID)
+	if err != nil || recUpdated == nil {
+		return
+	}
+
+	completedAt := time.Now().UTC()
+	recUpdated.HealthVerification.CompletedAt = &completedAt
+	recUpdated.HealthVerification.FinalErrorRate = float64(errCount)
+
+	if errCount == 0 {
+		recUpdated.Status = models.StatusVerifiedHealthy
+		recUpdated.HealthVerification.Status = "healthy"
+		recUpdated.HealthVerification.Detail = fmt.Sprintf("Health verification passed: 0 error logs detected during post-rollback check (%ds window).", waitSec)
+		recUpdated.Timeline = append(recUpdated.Timeline, models.TimelineStep{
+			Timestamp: completedAt,
+			Stage:     "health_verified",
+			Detail:    fmt.Sprintf("Service verified healthy after rollback to %s", target),
+		})
+		_ = o.slackClient.SendMessage(ctx, fmt.Sprintf(":white_check_mark: *Incident %s Verified Healthy*: Rollback to `%s` cleared error spike.", recUpdated.ID, target))
+	} else {
+		recUpdated.Status = models.StatusEscalated
+		recUpdated.HealthVerification.Status = "unhealthy"
+		recUpdated.HealthVerification.Detail = fmt.Sprintf("Health verification failed: %d errors observed after rollback to %s. Escalation required.", errCount, target)
+		recUpdated.Timeline = append(recUpdated.Timeline, models.TimelineStep{
+			Timestamp: completedAt,
+			Stage:     "health_verification_failed",
+			Detail:    fmt.Sprintf("Post-rollback errors persist (%d errors). Escalated to secondary on-call.", errCount),
+		})
+		_ = o.slackClient.SendMessage(ctx, fmt.Sprintf(":rotating_light: *ESCALATION REQUIRED (%s)*: Rollback to `%s` did not clear errors (%d errors in post-mitigation check). Please inspect manually.", recUpdated.ID, target, errCount))
+	}
+
+	_ = o.store.SaveIncident(ctx, recUpdated)
+	o.Broadcast("incident_updated", recUpdated.ID)
+}
+
+func (o *Orchestrator) CreatePostmortemIssue(ctx context.Context, incidentID string) (string, error) {
+	record, err := o.store.GetIncident(ctx, incidentID)
+	if err != nil || record == nil {
+		return "", fmt.Errorf("incident not found: %s", incidentID)
+	}
+
+	token := o.cfg.GitHubToken
+	repo := o.cfg.GitHubRepo
+	svcCfg := o.cfg.GetService(record.Event.Service)
+	if svcCfg != nil {
+		if svcCfg.GitHubToken != "" {
+			token = svcCfg.GitHubToken
+		}
+		if svcCfg.Repo != "" {
+			repo = svcCfg.Repo
+		}
+	}
+
+	if token == "" || repo == "" {
+		return "", fmt.Errorf("github_token and repo not configured for service '%s'", record.Event.Service)
+	}
+
+	title := fmt.Sprintf("[Postmortem] %s: %s (%s)", record.Event.Service, record.Event.Title, record.ID)
+	body := GeneratePostmortemMarkdown(record)
+
+	issueURL, err := o.twoWay.CreateGitHubPostmortemIssue(ctx, token, repo, title, body)
+	if err != nil {
+		return "", err
+	}
+
+	record.PostmortemURL = issueURL
+	record.Timeline = append(record.Timeline, models.TimelineStep{
+		Timestamp: time.Now().UTC(),
+		Stage:     "postmortem_issue_created",
+		Detail:    fmt.Sprintf("Exported postmortem to GitHub Issue: %s", issueURL),
+	})
 
 	_ = o.store.SaveIncident(ctx, record)
 	o.Broadcast("incident_updated", record.ID)
-	return record, rb, nil
+	return issueURL, nil
 }
 
 func (o *Orchestrator) DismissIncident(ctx context.Context, incidentID, actor string) (*models.IncidentRecord, error) {
@@ -509,4 +748,78 @@ func GeneratePostmortemMarkdown(record *models.IncidentRecord) string {
 	}
 
 	return sb.String()
+}
+
+func (o *Orchestrator) HandleSlackCommand(ctx context.Context, commandText, channel, threadTS string) string {
+	cmd := strings.ToLower(strings.TrimSpace(commandText))
+
+	var record *models.IncidentRecord
+	incidents, err := o.store.ListIncidents(ctx, 10, "", "", "")
+	if err == nil && len(incidents) > 0 {
+		if threadTS != "" {
+			for _, inc := range incidents {
+				if inc.SlackMessageTS == threadTS {
+					record = &inc
+					break
+				}
+			}
+		}
+		if record == nil {
+			record = &incidents[0]
+		}
+	}
+
+	if record == nil {
+		return "No incident records found."
+	}
+
+	switch {
+	case strings.Contains(cmd, "diff"):
+		if record.Brief != nil && record.Brief.TopCandidate != nil {
+			c := record.Brief.TopCandidate.Commit
+			var patches []string
+			for _, f := range c.Files {
+				if f.Patch != "" {
+					patches = append(patches, fmt.Sprintf("```\n--- %s\n%s\n```", f.Path, f.Patch))
+				}
+			}
+			if len(patches) > 0 {
+				return fmt.Sprintf("*Diff for commit `%s` by %s:*\n%s", c.ShortSHA, c.Author, strings.Join(patches, "\n"))
+			}
+			return fmt.Sprintf("Commit `%s` modified %d file(s) without patch diff cached.", c.ShortSHA, len(c.Files))
+		}
+		return "No correlated commit diff available for this incident."
+
+	case strings.Contains(cmd, "logs"):
+		if record.Brief != nil && len(record.Brief.Evidence) > 0 {
+			return fmt.Sprintf("*Evidence Logs for Incident `%s`:*\n• %s", record.ID, strings.Join(record.Brief.Evidence, "\n• "))
+		}
+		return fmt.Sprintf("No logs captured for incident `%s`.", record.ID)
+
+	case strings.Contains(cmd, "status"):
+		mttr := "N/A"
+		if record.MTTRSeconds != nil {
+			mttr = fmt.Sprintf("%.1fs", *record.MTTRSeconds)
+		}
+		health := "N/A"
+		if record.HealthVerification != nil {
+			health = record.HealthVerification.Status
+		}
+		return fmt.Sprintf("*Status for Incident `%s`:*\n• Status: `%s`\n• MTTR: %s\n• Health Verification: `%s`\n• Rollback Target: `%s`",
+			record.ID, record.Status, mttr, health, func() string {
+				if record.Brief != nil {
+					return record.Brief.RollbackTarget
+				}
+				return "N/A"
+			}())
+
+	case strings.Contains(cmd, "postmortem"):
+		if record.PostmortemURL != "" {
+			return fmt.Sprintf("*Postmortem Issue:* %s", record.PostmortemURL)
+		}
+		return fmt.Sprintf("Postmortem available at: `/api/incidents/%s/postmortem.md`", record.ID)
+
+	default:
+		return "IncidentPilot Assistant commands:\n• *diff* - View offending commit code diff\n• *logs* - View primary error logs and stacktrace\n• *status* - View incident status, MTTR, and health verification\n• *postmortem* - View postmortem export link"
+	}
 }

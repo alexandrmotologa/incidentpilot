@@ -11,6 +11,7 @@ export const App: React.FC = () => {
   const [filterStatus, setFilterStatus] = useState<string>("");
   const [simScenario, setSimScenario] = useState<string>("go_nil_pointer");
   const [isSimulating, setIsSimulating] = useState<boolean>(false);
+  const [isExporting, setIsExporting] = useState<boolean>(false);
 
   const fetchIncidents = async () => {
     try {
@@ -105,11 +106,30 @@ export const App: React.FC = () => {
     await fetchMetrics();
   };
 
+  const handleExportGitHub = async (inc: IncidentRecord) => {
+    setIsExporting(true);
+    try {
+      const res = await fetch(`/api/incidents/${encodeURIComponent(inc.id)}/export-github`, {
+        method: "POST",
+      });
+      if (res.ok) {
+        const data = await res.json();
+        if (data.issue_url) {
+          window.open(data.issue_url, "_blank");
+        }
+        await fetchIncidents();
+      }
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const selectedIncident = incidents.find((i) => i.id === selectedId) || incidents[0];
   const brief = selectedIncident?.brief;
   const canAct =
     selectedIncident &&
     selectedIncident.status !== "rolled_back" &&
+    selectedIncident.status !== "verified_healthy" &&
     selectedIncident.status !== "dismissed" &&
     selectedIncident.status !== "resolved";
   const rollbackTarget = brief?.rollback_target || "previous-stable";
@@ -293,8 +313,52 @@ export const App: React.FC = () => {
                   >
                     Postmortem .md
                   </a>
+                  {selectedIncident.postmortem_url ? (
+                    <a
+                      className="btn btn-ghost"
+                      href={selectedIncident.postmortem_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      style={{ color: "var(--accent)" }}
+                    >
+                      GitHub Issue ↗
+                    </a>
+                  ) : (
+                    <button
+                      className="btn btn-ghost"
+                      disabled={isExporting}
+                      onClick={() => handleExportGitHub(selectedIncident)}
+                    >
+                      {isExporting ? "Exporting..." : "GitHub Issue"}
+                    </button>
+                  )}
                 </div>
               </div>
+
+              {selectedIncident.health_verification && (
+                <div
+                  className={`box banner-health ${selectedIncident.health_verification.status}`}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "space-between",
+                      gap: "10px",
+                    }}
+                  >
+                    <span>
+                      <strong>
+                        Health Check ({selectedIncident.health_verification.status.toUpperCase()}):
+                      </strong>{" "}
+                      {selectedIncident.health_verification.detail}
+                    </span>
+                    <span className="pill">
+                      errors post-rollback: {selectedIncident.health_verification.final_error_rate}
+                    </span>
+                  </div>
+                </div>
+              )}
 
               <div className="box">
                 <h3>Incident Brief</h3>

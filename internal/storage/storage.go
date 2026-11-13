@@ -223,12 +223,12 @@ func (s *Store) FindActiveByFingerprint(ctx context.Context, fingerprint string,
 	SELECT record_json FROM incidents
 	WHERE fingerprint = ?
 	  AND created_at >= ?
-	  AND status NOT IN (?, ?, ?)
+	  AND status NOT IN (?, ?, ?, ?)
 	ORDER BY created_at DESC
 	LIMIT 1;
 	`
 
-	row := s.db.QueryRowContext(ctx, query, fingerprint, cutoff, string(models.StatusResolved), string(models.StatusDismissed), string(models.StatusRolledBack))
+	row := s.db.QueryRowContext(ctx, query, fingerprint, cutoff, string(models.StatusResolved), string(models.StatusDismissed), string(models.StatusRolledBack), string(models.StatusVerifiedHealthy))
 	var raw string
 	if err := row.Scan(&raw); err != nil {
 		if err == sql.ErrNoRows {
@@ -293,9 +293,9 @@ func (s *Store) ComputeMetrics(ctx context.Context) (*models.SreMetrics, error) 
 
 	for _, r := range records {
 		switch r.Status {
-		case models.StatusInvestigating, models.StatusBriefSent, models.StatusRollbackPending, models.StatusRollbackFailed:
+		case models.StatusInvestigating, models.StatusBriefSent, models.StatusRollbackPending, models.StatusRollbackFailed, models.StatusMitigating, models.StatusEscalated:
 			activeCount++
-		case models.StatusResolved, models.StatusRolledBack:
+		case models.StatusResolved, models.StatusRolledBack, models.StatusVerifiedHealthy:
 			resolvedCount++
 		}
 

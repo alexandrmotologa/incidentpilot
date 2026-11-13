@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 
+	"github.com/alexandrmotologa/incidentpilot/pkg/models"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,10 +19,11 @@ type ObservabilityConfig struct {
 }
 
 type MitigationConfig struct {
-	AllowAutoRollback bool   `yaml:"allow_auto_rollback"`
-	RollbackCommand   string `yaml:"rollback_command"`
-	RollbackProvider  string `yaml:"rollback_provider"`
-	RollbackWebhook   string `yaml:"rollback_webhook_url"`
+	AllowAutoRollback bool                      `yaml:"allow_auto_rollback"`
+	AutoRollback      models.AutoRollbackPolicy `yaml:"auto_rollback"`
+	RollbackCommand   string                    `yaml:"rollback_command"`
+	RollbackProvider  string                    `yaml:"rollback_provider"`
+	RollbackWebhook   string                    `yaml:"rollback_webhook_url"`
 }
 
 type ServiceConfig struct {
@@ -61,6 +63,11 @@ type Config struct {
 	SentrySecret               string              `yaml:"sentry_client_secret"`
 	AlertmanagerToken          string              `yaml:"alertmanager_bearer_token"`
 	DatadogToken               string              `yaml:"datadog_webhook_token"`
+	PagerDutyAPIToken          string              `yaml:"pagerduty_api_token"`
+	SentryAuthToken            string              `yaml:"sentry_auth_token"`
+	GitHubToken                string              `yaml:"github_token"`
+	GitHubRepo                 string              `yaml:"github_repo"`
+	HealthCheckDurationSec     int                 `yaml:"health_check_duration_seconds"`
 	Services                   []ServiceConfig     `yaml:"services"`
 	Notifications              NotificationsConfig `yaml:"notifications"`
 	RunbooksPath               string              `yaml:"runbooks_path"`
@@ -76,6 +83,7 @@ func DefaultConfig() *Config {
 		InvestigationTimeoutSec: 55,
 		LogWindowMinutes:        15,
 		GitLookbackHours:        48,
+		HealthCheckDurationSec:  30,
 		LLMModel:                "gpt-4o-mini",
 		RunbooksPath:            "./runbooks.yaml",
 	}

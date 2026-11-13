@@ -222,6 +222,81 @@ func (c *Client) SendBrief(ctx context.Context, record *models.IncidentRecord) (
 	return false, "", nil
 }
 
+func (c *Client) SendMessage(ctx context.Context, text string) error {
+	if c.WebhookURL == "" && (c.BotToken == "" || c.Channel == "") {
+		return nil
+	}
+	client := c.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+
+	if c.BotToken != "" && c.Channel != "" {
+		body := map[string]any{
+			"channel": c.Channel,
+			"text":    text,
+		}
+		data, _ := json.Marshal(body)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/chat.postMessage", bytes.NewBuffer(data))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Authorization", "Bearer "+c.BotToken)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		return nil
+	}
+
+	if c.WebhookURL != "" {
+		body := map[string]any{"text": text}
+		data, _ := json.Marshal(body)
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.WebhookURL, bytes.NewBuffer(data))
+		if err != nil {
+			return err
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return err
+		}
+		defer resp.Body.Close()
+		return nil
+	}
+	return nil
+}
+
+func (c *Client) ReplyThread(ctx context.Context, threadTS, text string) error {
+	if c.BotToken == "" || c.Channel == "" || threadTS == "" {
+		return nil
+	}
+	client := c.HTTPClient
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	body := map[string]any{
+		"channel":   c.Channel,
+		"text":      text,
+		"thread_ts": threadTS,
+	}
+	data, _ := json.Marshal(body)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "https://slack.com/api/chat.postMessage", bytes.NewBuffer(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.BotToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	return nil
+}
+
 func PostResponseURL(ctx context.Context, responseURL string, record *models.IncidentRecord) error {
 	if responseURL == "" {
 		return nil

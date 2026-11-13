@@ -99,8 +99,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/webhooks/datadog", s.handleDatadog)
 	s.mux.HandleFunc("/webhooks/generic", s.handleGeneric)
 
-	// Slack Interactivity
+	// Slack Interactivity & Events
 	s.mux.HandleFunc("/integrations/slack/actions", s.handleSlackActions)
+	s.mux.HandleFunc("/integrations/slack/events", s.handleSlackEvents)
 }
 
 func (s *Server) handleMetrics(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +216,21 @@ func (s *Server) handleIncidentByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		jsonResponse(w, http.StatusOK, rec)
+
+	case "export-github":
+		if r.Method != http.MethodPost {
+			http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		issueURL, err := s.orch.CreatePostmortemIssue(r.Context(), id)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		jsonResponse(w, http.StatusOK, map[string]string{
+			"incident_id": id,
+			"issue_url":   issueURL,
+		})
 
 	case "postmortem.md":
 		record, err := s.store.GetIncident(r.Context(), id)
@@ -462,6 +478,70 @@ func (s *Server) handleSlackActions(w http.ResponseWriter, r *http.Request) {
 			jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "status": rec.Status})
 			return
 		}
+	}
+
+	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})
+}
+
+func (s *Server) handleSlackEvents(w http.ResponseWriter, r *http.Request) {
+	body, _ := io.ReadAll(r.Body)
+
+	ts := r.Header.Get("X-Slack-Request-Timestamp")
+	sig := r.Header.Get("X-Slack-Signature")
+	if s.cfg.Notifications.Slack.SigningSecret != "" {
+		if !webhooks.VerifySlackSignature(body, ts, sig, s.cfg.Notifications.Slack.SigningSecret, 300) {
+			http.Error(w, "Invalid Slack signature", http.StatusUnauthorized)
+			return
+		}
+	}
+
+	var req struct {
+		Type      string `json:"type"`
+		Challenge string `json:"challenge"`
+		Event     struct {
+			Type     string `json:"type"`
+			User     string `json:"user"`
+			Text     string `json:"text"`
+			Channel  string `json:"channel"`
+			Ts       string `json:"ts"`
+			ThreadTS string `json:"thread_ts"`
+			BotID    string `json:"bot_id"`
+		} `json:"event"`
+	}
+
+	if err := json.Unmarshal(body, &req); err != nil {
+		http.Error(w, "Bad JSON", http.StatusBadRequest)
+		return
+	}
+
+	// 1. URL Verification challenge for Slack setup
+	if req.Type == "url_verification" {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"challenge": req.Challenge})
+		return
+	}
+
+	// 2. Event Callback
+	if req.Type == "event_callback" {
+		if req.Event.BotID != "" {
+			jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "ignored": "bot"})
+			return
+		}
+
+		threadTS := req.Event.ThreadTS
+		if threadTS == "" {
+			threadTS = req.Event.Ts
+		}
+
+		reply := s.orch.HandleSlackCommand(r.Context(), req.Event.Text, req.Event.Channel, threadTS)
+		if reply != "" {
+			go func() {
+				_ = s.orch.GetSlackClient().ReplyThread(context.Background(), threadTS, reply)
+			}()
+		}
+
+		jsonResponse(w, http.StatusOK, map[string]any{"ok": true})
+		return
 	}
 
 	jsonResponse(w, http.StatusOK, map[string]any{"ok": true, "ignored": true})

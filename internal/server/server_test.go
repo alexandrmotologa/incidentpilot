@@ -248,3 +248,42 @@ func TestSlackInteractivityDismiss(t *testing.T) {
 		t.Errorf("expected incident to be dismissed, got %+v", updated)
 	}
 }
+
+func TestSlackEventsEndpoint(t *testing.T) {
+	srv, _, _ := setupTestServer(t)
+
+	// 1. URL Verification
+	bodyChallenge := `{"type":"url_verification","challenge":"test-challenge-123"}`
+	req := httptest.NewRequest(http.MethodPost, "/integrations/slack/events", strings.NewReader(bodyChallenge))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for url_verification, got %d", rec.Code)
+	}
+	var res map[string]string
+	_ = json.NewDecoder(rec.Body).Decode(&res)
+	if res["challenge"] != "test-challenge-123" {
+		t.Errorf("expected challenge echo, got: %v", res)
+	}
+
+	// 2. Event Callback
+	bodyEvent := `{
+		"type": "event_callback",
+		"event": {
+			"type": "app_mention",
+			"text": "@incidentpilot status",
+			"channel": "C12345",
+			"ts": "1234.5678"
+		}
+	}`
+	req2 := httptest.NewRequest(http.MethodPost, "/integrations/slack/events", strings.NewReader(bodyEvent))
+	req2.Header.Set("Content-Type", "application/json")
+	rec2 := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(rec2, req2)
+
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200 for event_callback, got %d", rec2.Code)
+	}
+}

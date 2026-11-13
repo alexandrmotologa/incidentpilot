@@ -100,6 +100,15 @@ export interface IncidentEvent {
   is_resolved: boolean;
 }
 
+export interface HealthVerificationRecord {
+  status: string;
+  started_at: string;
+  completed_at?: string;
+  initial_error_rate: number;
+  final_error_rate: number;
+  detail: string;
+}
+
 export interface IncidentRecord {
   id: string;
   event: IncidentEvent;
@@ -112,6 +121,8 @@ export interface IncidentRecord {
   brief?: IncidentBrief;
   timeline: TimelineStep[];
   rollbacks: RollbackRecord[];
+  postmortem_url?: string;
+  health_verification?: HealthVerificationRecord;
 }
 
 export interface SreMetrics {

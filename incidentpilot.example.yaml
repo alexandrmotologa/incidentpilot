@@ -6,12 +6,17 @@ dedup_window_seconds: 300
 investigation_timeout_seconds: 60
 log_window_minutes: 15
 git_lookback_hours: 24
+health_check_duration_seconds: 30
 
-# Webhook authentication secrets
+# Webhook authentication secrets & two-way tokens
 pagerduty_webhook_secret: "${PAGERDUTY_WEBHOOK_SECRET}"
+pagerduty_api_token: "${PAGERDUTY_API_TOKEN}"
 sentry_client_secret: "${SENTRY_CLIENT_SECRET}"
+sentry_auth_token: "${SENTRY_AUTH_TOKEN}"
 alertmanager_bearer_token: "${ALERTMANAGER_BEARER_TOKEN}"
 datadog_webhook_token: "${DATADOG_WEBHOOK_TOKEN}"
+github_token: "${GITHUB_TOKEN}"
+github_repo: "alexandrmotologa/incidentpilot"
 
 # Optional LLM synthesis (falls back to deterministic AST correlation when unset)
 llm_api_url: "${LLM_API_URL}"
@@ -32,6 +37,12 @@ services:
       log_file_path: "./data/service.log.jsonl"
     mitigation:
       allow_auto_rollback: false
+      auto_rollback:
+        enabled: true
+        environments: ["staging", "canary"]
+        min_confidence: 90.0
+        min_spike_ratio: 5.0
+        max_rollback_age_hours: 48
       rollback_provider: "local_git"
       rollback_command: ""
 

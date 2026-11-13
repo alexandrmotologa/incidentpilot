@@ -6,14 +6,17 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/alexandrmotologa/incidentpilot/internal/benchmark"
 	"github.com/alexandrmotologa/incidentpilot/internal/config"
 	"github.com/alexandrmotologa/incidentpilot/internal/orchestrator"
 	"github.com/alexandrmotologa/incidentpilot/internal/server"
 	"github.com/alexandrmotologa/incidentpilot/internal/simulator"
 	"github.com/alexandrmotologa/incidentpilot/internal/storage"
+	"github.com/alexandrmotologa/incidentpilot/internal/tui"
 	"github.com/alexandrmotologa/incidentpilot/pkg/models"
 )
 
@@ -37,6 +40,10 @@ func main() {
 		cmdList(os.Args[2:])
 	case "simulate":
 		cmdSimulate(os.Args[2:])
+	case "bench":
+		cmdBench(os.Args[2:])
+	case "top":
+		cmdTop(os.Args[2:])
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown command: %s\n", command)
 		printUsage()
@@ -51,6 +58,8 @@ func printUsage() {
 	fmt.Println("  incidentpilot replay --incident-id <id> [--time <RFC3339>]")
 	fmt.Println("  incidentpilot list [--status active|all]")
 	fmt.Println("  incidentpilot simulate [--scenario go_nil_pointer|python_checkout_error|oom_runbook]")
+	fmt.Println("  incidentpilot bench [--config ./incidentpilot.yaml]")
+	fmt.Println("  incidentpilot top [--config ./incidentpilot.yaml] [--once]")
 }
 
 func cmdServe(args []string) {
@@ -238,5 +247,61 @@ func cmdSimulate(args []string) {
 			}
 		}
 		fmt.Printf("Final Status:   %s (Total elapsed: %v)\n", updated.Status, time.Since(start).Round(time.Millisecond))
+	}
+}
+
+func cmdBench(args []string) {
+	fs := flag.NewFlagSet("bench", flag.ExitOnError)
+	configPath := fs.String("config", "./incidentpilot.yaml", "Path to incidentpilot.yaml configuration")
+	_ = fs.Parse(args)
+
+	cfg, _ := config.LoadConfig(*configPath)
+	tmpDir, err := os.MkdirTemp("", "incidentpilot-bench-*")
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create temp dir: %v\n", err)
+		os.Exit(1)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	store, err := storage.NewStore(filepath.Join(tmpDir, "bench.db"))
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create benchmark store: %v\n", err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	fmt.Println("[Benchmark] Running automated SRE correlation & mitigation benchmark suite...")
+	report, err := benchmark.RunBenchmarkSuite(context.Background(), cfg, store)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Benchmark suite execution error: %v\n", err)
+		os.Exit(1)
+	}
+
+	benchmark.PrintBenchmarkReport(report)
+	if report.PassedCount < report.TotalScenarios {
+		os.Exit(1)
+	}
+}
+
+func cmdTop(args []string) {
+	fs := flag.NewFlagSet("top", flag.ExitOnError)
+	configPath := fs.String("config", "./incidentpilot.yaml", "Path to incidentpilot.yaml configuration")
+	once := fs.Bool("once", false, "Render a single snapshot and exit")
+	_ = fs.Parse(args)
+
+	cfg, _ := config.LoadConfig(*configPath)
+	store, err := storage.NewStore(cfg.DatabasePath)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open storage at %s: %v\n", cfg.DatabasePath, err)
+		os.Exit(1)
+	}
+	defer store.Close()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := tui.RunTop(ctx, store, cfg.DatabasePath, *once); err != nil {
+		fmt.Fprintf(os.Stderr, "TUI error: %v\n", err)
+		os.Exit(1)
 	}
 }
